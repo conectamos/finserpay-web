@@ -168,7 +168,9 @@ test("neither commercial seller nor commercial supervisor navigation exposes att
 });
 
 test("central dashboard preserves its attention link and the ally dashboard omits it", () => {
-  const Dashboard = load("app/dashboard/_components/admin-central-dashboard.tsx").default;
+  const Dashboard = load("app/dashboard/_components/admin-central-dashboard.tsx", {
+    "./ally-dashboard-fpd-panel": { default: stub("AllyDashboardFpdPanel") },
+  }).default;
   const health = { totalBalance: 0, healthyPercent: 0, earlyPercent: 0, criticalPercent: 0 };
   const data = { daily: [], productHealth: { IPHONE: health, ANDROID: health }, creditPerformance: [], monthLabel: "Prueba", monthKey: "2026-10" };
   for (const adminCentral of [false, true]) {

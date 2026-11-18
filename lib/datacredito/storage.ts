@@ -8,6 +8,7 @@ import prisma from "@/lib/prisma";
 import { buildDataCreditoAdminRiskSummary } from "@/lib/datacredito/admin-report";
 import { serializeDataCreditoDailyQuota } from "@/lib/datacredito/daily-quota";
 import { syncDataCreditoBranchDailyQuotaUsage } from "@/lib/datacredito/branch-quota";
+import { boundDataCreditoDraftExpirySql, dataCreditoApprovalDraftId } from "@/lib/datacredito/draft-approval";
 import {
   DataCreditoPolicyValidationError,
   parseDataCreditoPolicyBands,
@@ -90,6 +91,8 @@ export type DataCreditoAssessmentRow = {
   errorCode: string | null;
   durationMs: number | null;
   expiresAt: Date;
+  /** Read-time authority of the same draft, without changing the inquiry expiry. */
+  draftApprovalExpiresAt?: Date | null;
   claimedAt: Date | null;
   claimTokenHash: string | null;
   claimExpiresAt: Date | null;
@@ -645,6 +648,8 @@ async function verifyDataCreditoPolicyProfileSchema() {
           AND NOT usage_guard.tgisinternal
           AND usage_guard.tgenabled IN ('O', 'A')
           AND usage_guard.tgtype = 19
+          AND to_regprocedure('finser_has_bound_datacredito_draft_v1(uuid,integer)') IS NOT NULL
+          AND pg_get_functiondef(usage_guard_function.oid) ILIKE '%finser_has_bound_datacredito_draft_v1%'
       ) AS "globalUsageGuardPresent"
   `);
   const state = rows[0];
@@ -1933,7 +1938,6 @@ async function hasActiveClaimForDataCreditoDocument(
         WHERE claimed."documentHash" = $1
           AND claimed."providerEnvironment" = $2
           AND claimed."status" = 'APROBADO'
-          AND claimed."expiresAt" > CURRENT_TIMESTAMP
           AND claimed."claimTokenHash" IS NOT NULL
           AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
       ) AS "active"
@@ -2206,8 +2210,7 @@ async function cloneReusableDataCreditoAssessment(
           WHERE claimed."documentHash" = source."documentHash"
             AND claimed."providerEnvironment" = source."providerEnvironment"
             AND claimed."status" = 'APROBADO'
-            AND claimed."expiresAt" > CURRENT_TIMESTAMP
-            AND claimed."claimTokenHash" IS NOT NULL
+              AND claimed."claimTokenHash" IS NOT NULL
             AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
         )
       RETURNING *
@@ -3010,7 +3013,12 @@ export async function getDataCreditoAssessmentDocumentState(
             AND consumed."documentHash" = $2
             AND consumed."providerEnvironment" = $3
             AND consumed."status" IN ('APROBADO', 'RECHAZADO')
-            AND consumed."expiresAt" > CURRENT_TIMESTAMP
+            AND (consumed."expiresAt" > CURRENT_TIMESTAMP OR EXISTS (
+              SELECT 1 FROM "DataCreditoAssessment" same_family
+              WHERE same_family."id" = $1
+                AND COALESCE(same_family."reusedFromAssessmentId", same_family."id") =
+                  COALESCE(consumed."reusedFromAssessmentId", consumed."id")
+            ))
             AND consumed."consumedAt" IS NOT NULL
             AND (
               EXISTS (
@@ -3040,7 +3048,6 @@ export async function getDataCreditoAssessmentDocumentState(
             AND claimed."documentHash" = $2
             AND claimed."providerEnvironment" = $3
             AND claimed."status" = 'APROBADO'
-            AND claimed."expiresAt" > CURRENT_TIMESTAMP
             AND claimed."claimTokenHash" IS NOT NULL
             AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
         ) AS "inProgress"
@@ -3090,12 +3097,16 @@ export function serializeDataCreditoAssessment(row: DataCreditoAssessmentRow) {
         optional: true,
       })
     : null;
+  const approvalExpiresAt = row.draftApprovalExpiresAt || row.expiresAt;
   return {
     assessmentId: row.id,
     platform: row.platform,
     status: row.status === "RECHAZADO" ? "RECHAZADO" : approved ? "APROBADO" : "NO_EVALUADO",
     expiresAt:
-      row.expiresAt instanceof Date ? row.expiresAt.toISOString() : String(row.expiresAt),
+      approvalExpiresAt instanceof Date ? approvalExpiresAt.toISOString() : String(approvalExpiresAt),
+    ...(row.draftApprovalExpiresAt ? {
+      assessmentExpiresAt: row.expiresAt instanceof Date ? row.expiresAt.toISOString() : String(row.expiresAt),
+    } : {}),
     offer: approved && financingTerms
       ? {
           initialPaymentPercentage: Number(row.offer?.initialPaymentPercentage),
@@ -3114,6 +3125,7 @@ export type DataCreditoAssessmentMatchInput = DataCreditoIdentityInput &
   DataCreditoAssessmentScope & {
     assessmentId: string;
     providerEnvironment: string;
+    solicitudId?: number | null;
   };
 
 export type DataCreditoAssessmentCreditClassification =
@@ -3166,7 +3178,9 @@ export async function classifyDataCreditoAssessmentForCredit(
             AND consumed."documentHash" = assessment."documentHash"
             AND consumed."providerEnvironment" = assessment."providerEnvironment"
             AND consumed."status" IN ('APROBADO', 'RECHAZADO')
-            AND consumed."expiresAt" > CURRENT_TIMESTAMP
+            AND (consumed."expiresAt" > CURRENT_TIMESTAMP OR
+              COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
+                COALESCE(assessment."reusedFromAssessmentId", assessment."id"))
             AND consumed."consumedAt" IS NOT NULL
             AND (
               COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
@@ -3191,7 +3205,6 @@ export async function classifyDataCreditoAssessmentForCredit(
           WHERE claimed."documentHash" = assessment."documentHash"
             AND claimed."providerEnvironment" = assessment."providerEnvironment"
             AND claimed."status" = 'APROBADO'
-            AND claimed."expiresAt" > CURRENT_TIMESTAMP
             AND claimed."claimTokenHash" IS NOT NULL
             AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
         ) AS "globalClaimActive"
@@ -3251,11 +3264,13 @@ export async function getApprovedDataCreditoAssessmentForCredit(
   input: DataCreditoAssessmentMatchInput
 ) {
   if (!isUuid(input.assessmentId)) return null;
+  const draftId = dataCreditoApprovalDraftId(input.solicitudId);
+  if (input.solicitudId != null && draftId === null) return null;
   await ensureDataCreditoSchema();
   const match = assessmentMatchParams(input);
   const rows = await prisma.$queryRawUnsafe<DataCreditoAssessmentRow[]>(
     `
-      SELECT assessment.*
+      SELECT assessment.*, ${boundDataCreditoDraftExpirySql("assessment", "$10", "$11")} AS "draftApprovalExpiresAt"
       FROM "DataCreditoAssessment" assessment
       WHERE assessment."id" = $1
         AND assessment."documentHash" = $2
@@ -3269,14 +3284,17 @@ export async function getApprovedDataCreditoAssessmentForCredit(
         AND assessment."status" = 'APROBADO'
         AND assessment."score" BETWEEN -1 AND 950
         AND assessment."offer" IS NOT NULL
-        AND assessment."expiresAt" > CURRENT_TIMESTAMP
+        AND (($10::integer IS NULL AND assessment."expiresAt" > CURRENT_TIMESTAMP)
+          OR ($10::integer IS NOT NULL AND ${boundDataCreditoDraftExpirySql("assessment", "$10", "$11")} > clock_timestamp()))
         AND assessment."consumedAt" IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM "DataCreditoAssessment" consumed
           WHERE consumed."documentHash" = assessment."documentHash"
             AND consumed."providerEnvironment" = assessment."providerEnvironment"
             AND consumed."status" IN ('APROBADO', 'RECHAZADO')
-            AND consumed."expiresAt" > CURRENT_TIMESTAMP
+            AND (consumed."expiresAt" > CURRENT_TIMESTAMP OR
+              COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
+                COALESCE(assessment."reusedFromAssessmentId", assessment."id"))
             AND consumed."consumedAt" IS NOT NULL
             AND (
               COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
@@ -3300,7 +3318,6 @@ export async function getApprovedDataCreditoAssessmentForCredit(
           WHERE claimed."documentHash" = assessment."documentHash"
             AND claimed."providerEnvironment" = assessment."providerEnvironment"
             AND claimed."status" = 'APROBADO'
-            AND claimed."expiresAt" > CURRENT_TIMESTAMP
             AND claimed."claimTokenHash" IS NOT NULL
             AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
         )
@@ -3314,13 +3331,17 @@ export async function getApprovedDataCreditoAssessmentForCredit(
     match.userId,
     match.sellerId,
     match.sedeId,
-    match.aliadoId
+    match.aliadoId,
+    draftId,
+    normalizeDataCreditoDocument(input.documentNumber)
   );
   return rows[0] || null;
 }
 
 export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMatchInput) {
   if (!isUuid(input.assessmentId)) return null;
+  const draftId = dataCreditoApprovalDraftId(input.solicitudId);
+  if (input.solicitudId != null && draftId === null) return null;
   await ensureDataCreditoSchema();
   const match = assessmentMatchParams(input);
   const claimToken = randomBytes(32).toString("base64url");
@@ -3373,7 +3394,8 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
           AND target."status" = 'APROBADO'
           AND target."score" BETWEEN -1 AND 950
           AND target."offer" IS NOT NULL
-          AND target."expiresAt" > CURRENT_TIMESTAMP
+          AND (($11::integer IS NULL AND target."expiresAt" > CURRENT_TIMESTAMP)
+            OR ($11::integer IS NOT NULL AND ${boundDataCreditoDraftExpirySql("target", "$11", "$12")} > clock_timestamp()))
           AND target."consumedAt" IS NULL
           AND (target."claimTokenHash" IS NULL OR target."claimExpiresAt" <= CURRENT_TIMESTAMP)
           AND NOT EXISTS (
@@ -3381,7 +3403,9 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
             WHERE consumed."documentHash" = target."documentHash"
               AND consumed."providerEnvironment" = target."providerEnvironment"
               AND consumed."status" IN ('APROBADO', 'RECHAZADO')
-              AND consumed."expiresAt" > CURRENT_TIMESTAMP
+              AND (consumed."expiresAt" > CURRENT_TIMESTAMP OR
+                COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
+                  COALESCE(target."reusedFromAssessmentId", target."id"))
               AND consumed."consumedAt" IS NOT NULL
               AND (
                 COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
@@ -3405,8 +3429,7 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
             WHERE claimed."documentHash" = target."documentHash"
               AND claimed."providerEnvironment" = target."providerEnvironment"
               AND claimed."status" = 'APROBADO'
-              AND claimed."expiresAt" > CURRENT_TIMESTAMP
-              AND claimed."claimTokenHash" IS NOT NULL
+                AND claimed."claimTokenHash" IS NOT NULL
               AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
           )
           AND NOT EXISTS (
@@ -3435,14 +3458,16 @@ export async function claimDataCreditoAssessment(input: DataCreditoAssessmentMat
       match.sellerId,
       match.sedeId,
       match.aliadoId,
-      claimTokenHash
+      claimTokenHash,
+      draftId,
+      normalizeDataCreditoDocument(input.documentNumber)
     );
     return rows[0] ? { assessment: rows[0], claimToken } : null;
   });
 }
 
 async function consumeDataCreditoAssessmentInTransaction(
-  input: { assessmentId: string; claimToken: string; creditId: number },
+  input: { assessmentId: string; claimToken: string; creditId: number; solicitudId?: number | null; documentNumber?: string },
   database: Prisma.TransactionClient
 ) {
   const claimTokenHash = hmacDataCreditoValue("claim", input.claimToken);
@@ -3474,14 +3499,17 @@ async function consumeDataCreditoAssessmentInTransaction(
       WHERE target."id" = $1 AND target."claimTokenHash" = $2
         AND target."claimExpiresAt" > CURRENT_TIMESTAMP
         AND target."status" = 'APROBADO'
-        AND target."expiresAt" > CURRENT_TIMESTAMP
+        AND (($3::integer IS NULL AND target."expiresAt" > CURRENT_TIMESTAMP)
+          OR ($3::integer IS NOT NULL AND ${boundDataCreditoDraftExpirySql("target", "$3", "$4", "$5")} > clock_timestamp()))
         AND target."consumedAt" IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM "DataCreditoAssessment" consumed
           WHERE consumed."documentHash" = target."documentHash"
             AND consumed."providerEnvironment" = target."providerEnvironment"
             AND consumed."status" IN ('APROBADO', 'RECHAZADO')
-            AND consumed."expiresAt" > CURRENT_TIMESTAMP
+            AND (consumed."expiresAt" > CURRENT_TIMESTAMP OR
+              COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
+                COALESCE(target."reusedFromAssessmentId", target."id"))
             AND consumed."consumedAt" IS NOT NULL
             AND (
               COALESCE(consumed."reusedFromAssessmentId", consumed."id") =
@@ -3506,7 +3534,6 @@ async function consumeDataCreditoAssessmentInTransaction(
             AND claimed."documentHash" = target."documentHash"
             AND claimed."providerEnvironment" = target."providerEnvironment"
             AND claimed."status" = 'APROBADO'
-            AND claimed."expiresAt" > CURRENT_TIMESTAMP
             AND claimed."claimTokenHash" IS NOT NULL
             AND claimed."claimExpiresAt" > CURRENT_TIMESTAMP
         )
@@ -3528,7 +3555,10 @@ async function consumeDataCreditoAssessmentInTransaction(
       FOR UPDATE
     `,
     input.assessmentId,
-    claimTokenHash
+    claimTokenHash,
+    dataCreditoApprovalDraftId(input.solicitudId),
+    normalizeDataCreditoDocument(input.documentNumber),
+    input.creditId
   );
   if (!claimedRows[0]) return null;
 
@@ -3555,6 +3585,8 @@ export async function consumeDataCreditoAssessment(
     assessmentId: string;
     claimToken: string;
     creditId: number;
+    solicitudId?: number | null;
+    documentNumber?: string;
   },
   database: Prisma.TransactionClient | typeof prisma = prisma
 ) {
@@ -3566,6 +3598,7 @@ export async function consumeDataCreditoAssessment(
   ) {
     return null;
   }
+  if (input.solicitudId != null && (!dataCreditoApprovalDraftId(input.solicitudId) || !normalizeDataCreditoDocument(input.documentNumber))) return null;
   await ensureDataCreditoSchema();
   if (database === prisma) {
     return prisma.$transaction((transaction) =>

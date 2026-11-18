@@ -91,7 +91,7 @@ async function context(db: Database, draft: Draft, mutation = false, manualRevie
   const config = getDataCreditoPublicConfig();
   const platform = text(draft.plataforma || payload.plataformaDispositivo).toUpperCase();
   if (!config.enabled || (platform !== "ANDROID" && platform !== "IPHONE")) fail("FIRMASEGURO_REVIEW_ASSESSMENT_INVALID", "La autoridad de riesgo no está vigente para esta solicitud.");
-  const assessmentMatch = { assessmentId, documentNumber, firstSurname: identity.querySurname,
+  const assessmentMatch = { assessmentId, solicitudId: draft.id, documentNumber, firstSurname: identity.querySurname,
     platform: platform as "ANDROID" | "IPHONE", providerEnvironment: config.environment, ...scope };
   const exceptionId = text(payload.creditRiskExceptionId);
   const riskAuthorization = exceptionId

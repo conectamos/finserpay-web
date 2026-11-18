@@ -34,7 +34,7 @@ runInNewContext(compile(readFileSync(new URL("../lib/datacredito/firmaseguro-ide
     return { identityDocumentStatus: documentStatus === "match" ? compared.status : documentStatus, identityDocumentNumber: compared.ok ? compared.documentNumber : null };
   },
   getDataCreditoPublicConfig: () => ({ enabled: true, environment: "production" }),
-  getApprovedDataCreditoAssessmentForCredit: async input => { assert.equal(input.firstSurname, "DIGITADO");assert.equal(input.sedeId, 3);return approved ? { id: assessmentId } : null; },
+  getApprovedDataCreditoAssessmentForCredit: async input => { assert.equal(input.firstSurname, "DIGITADO");assert.equal(input.sedeId, 3);assert.equal(input.solicitudId, 530);return approved ? { id: assessmentId } : null; },
   enforceDataCreditoCustomerIdentity: async (payload, scope, save) => {
     assert.equal(scope.userId, 4);assert.equal(scope.sellerId, 8);assert.equal(scope.aliadoId, 7);assert.equal(save, false);
     if (payload.clienteDocumento !== "123456789" || payload.clienteNombre !== canonical) throw new Error("DATACREDITO_IDENTITY_LOCKED_FIELDS");

@@ -161,7 +161,7 @@ export async function getCreditRiskAuthorizationForDraft(input: Match): Promise<
     AND UPPER(COALESCE(NULLIF(d."plataforma",''),d."payload"->>'plataformaDispositivo'))=$8 LIMIT 1`,
     input.solicitudId,input.assessmentId,input.documentNumber,input.userId,input.sellerId,input.sedeId,input.aliadoId,input.platform);
   return drafts[0] ? { source: "DATACREDITO", assessment, offer: assessment.offer, policyVersion: assessment.policyVersion,
-    policyRevisionId: assessment.policyRevisionId, expiresAt: asDate(assessment.expiresAt), exceptionId: null } : null;
+    policyRevisionId: assessment.policyRevisionId, expiresAt: asDate(assessment.draftApprovalExpiresAt || assessment.expiresAt), exceptionId: null } : null;
 }
 function transactionCode(payload: unknown, key: string) {
   const root = payload as { content?: { infoTransaccion?: { codigosRespuesta?: Array<{ clave?: unknown; valor?: unknown }> } } };

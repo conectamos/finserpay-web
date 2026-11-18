@@ -1720,6 +1720,7 @@ export async function POST(req: Request) {
       }
       dataCreditoAssessmentMatch = {
         assessmentId,
+        solicitudId: solicitudContext?.id,
         documentNumber: clienteDocumento,
         firstSurname: querySurname || clientePrimerApellido,
         platform: dataCreditoPlatform,
@@ -1965,8 +1966,25 @@ export async function POST(req: Request) {
               : null,
             numeroCuotas: plazoMeses,
           });
+    // The approval reader and the locked solicitud context above establish the
+    // server-side binding. POLITICA requires a complete validated snapshot;
+    // an approval cannot be replaced by global/legacy fallback values.
+    const hasApprovedDraftFinancialSnapshot = Boolean(
+      solicitudContext &&
+      dataCreditoAssessment &&
+      creditRiskAuthorization?.source !== "INTERNAL_EXCEPTION" &&
+      resolvedPolicyFinancialSettings.fianzaSource === "POLITICA"
+    );
+    if (!signedTermsSnapshot && solicitudContext && dataCreditoAssessment &&
+        creditRiskAuthorization?.source !== "INTERNAL_EXCEPTION" && !hasApprovedDraftFinancialSnapshot) {
+      return NextResponse.json({
+        code: "DATACREDITO_FINANCIAL_SNAPSHOT_REQUIRED",
+        error: "La aprobación no conserva todas las condiciones financieras originales. Solicita revisión de la oferta original antes de continuar.",
+      }, { status: 409 });
+    }
     if (
       !signedTermsSnapshot &&
+      !hasApprovedDraftFinancialSnapshot &&
       !hasCurrentCreditOriginationTerms(resolvedPolicyFinancialSettings)
     ) {
       return NextResponse.json(
@@ -3987,6 +4005,8 @@ export async function POST(req: Request) {
             assessmentId: claimedAssessment.assessmentId,
             claimToken: claimedAssessment.claimToken,
             creditId: result.credit.id,
+            solicitudId: requestedSolicitudId || undefined,
+            documentNumber: dataCreditoAssessmentMatch?.documentNumber,
           },
           transaction
         );

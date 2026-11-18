@@ -50,7 +50,9 @@ function load(file, extra = {}) {
 
 const Navigation = load("app/dashboard/_components/finser-navigation.tsx").default;
 const Sidebar = load("app/dashboard/_components/admin-sidebar.tsx").default;
-const Dashboard = load("app/dashboard/_components/admin-central-dashboard.tsx").default;
+const Dashboard = load("app/dashboard/_components/admin-central-dashboard.tsx", {
+  "./ally-dashboard-fpd-panel": component(Empty),
+}).default;
 const render = (type, props) => renderToStaticMarkup(jsxRuntime.jsx(type, props));
 const hrefs = html => Array.from(html.matchAll(/href="([^"]+)"/g), match => match[1]);
 

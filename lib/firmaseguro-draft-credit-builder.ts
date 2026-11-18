@@ -167,6 +167,7 @@ export async function getDraftDataCreditoOffer(
   const identity = await enforceDataCreditoCustomerIdentity(payload, { userId: row.usuarioId, sellerId: row.vendedorId, sedeId: row.sedeId, aliadoId: row.sedeAliadoId }, false, undefined, row.id);
   const assessmentMatch = {
     assessmentId: sanitizeText(payload.dataCreditoAssessmentId),
+    solicitudId: row.id,
     documentNumber,
     firstSurname: identity?.querySurname || sanitizeText(payload.clientePrimerApellido),
     platform,
@@ -417,7 +418,23 @@ export async function buildDraftCredit(
         dataCreditoOffer?.suretyPercentage ?? null,
       numeroCuotas: plazoMeses,
     });
-  if (!hasCurrentCreditOriginationTerms(resolvedPolicyFinancialSettings)) {
+  // getApprovedDataCreditoAssessmentForCredit verifies this draft's persisted
+  // binding, identity, ownership, validity and unused approval. POLITICA is only
+  // returned after validating its complete server-stored financial snapshot.
+  const hasApprovedDraftFinancialSnapshot = Boolean(
+    dataCreditoOffer &&
+    dataCreditoOffer.authorizationSource !== "INTERNAL_EXCEPTION" &&
+    resolvedPolicyFinancialSettings.fianzaSource === "POLITICA"
+  );
+  if (dataCreditoOffer && dataCreditoOffer.authorizationSource !== "INTERNAL_EXCEPTION" &&
+      !hasApprovedDraftFinancialSnapshot) {
+    throw new CreditValidationError(
+      "La aprobación no conserva todas las condiciones financieras originales. Solicita revisión de la oferta original antes de continuar.",
+      409,
+      "DATACREDITO_FINANCIAL_SNAPSHOT_REQUIRED"
+    );
+  }
+  if (!hasApprovedDraftFinancialSnapshot && !hasCurrentCreditOriginationTerms(resolvedPolicyFinancialSettings)) {
     throw new CreditValidationError(
       CREDIT_CURRENT_ORIGINATION_TERMS_ERROR_MESSAGE,
       409,

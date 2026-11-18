@@ -864,7 +864,7 @@ test("PostgreSQL aislado permite otra consulta tras anulación sin reutilizar la
       'EXECUTE FUNCTION "finser_guard_datacredito_pending_global"();'
     ));
     await database.exec(triggerSql(
-      'CREATE OR REPLACE FUNCTION "finser_guard_datacredito_global_usage_v1"()',
+      'CREATE OR REPLACE FUNCTION "finser_has_bound_datacredito_draft_v1"(',
       'EXECUTE FUNCTION "finser_guard_datacredito_global_usage_v1"();'
     ));
     await database.exec(`

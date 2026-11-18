@@ -12793,11 +12793,6 @@ export default function CreditFactoryConsole({
   const handleDataCreditoApproved = async (
     result: DataCreditoApprovedResult
   ) => {
-    const refreshingFinancialTerms = dataCreditoFinancialTermsRecovery;
-    if (refreshingFinancialTerms && !hasCurrentCreditOriginationTerms(result.offer.financialSettings)) {
-      setNotice({ text: "La política aún conserva condiciones anteriores. El administrador debe actualizarla antes de renovar la oferta. No se hizo una nueva consulta.", tone: "amber" });
-      return;
-    }
     const restoredDraftSnapshot = restoredDraftSnapshotRef.current;
     const restoredDraftId = result.solicitudId || draftId;
     const restoringDraftAssessment = Boolean(
@@ -12805,6 +12800,12 @@ export default function CreditFactoryConsole({
         restoredDraftSnapshot.draftId === restoredDraftId &&
         restoredDraftSnapshot.assessmentId === result.assessmentId
     );
+    // A stale recovery marker must not turn rehydration of the linked approval into a renewal.
+    const refreshingFinancialTerms = dataCreditoFinancialTermsRecovery && !restoringDraftAssessment;
+    if (refreshingFinancialTerms && !hasCurrentCreditOriginationTerms(result.offer.financialSettings)) {
+      setNotice({ text: "La política aún conserva condiciones anteriores. El administrador debe actualizarla antes de renovar la oferta. No se hizo una nueva consulta.", tone: "amber" });
+      return;
+    }
 
     if (restoringDraftAssessment) {
       cancelPendingDraftAutosave(true);

@@ -164,10 +164,20 @@ function fixture({ platform = "IPHONE", ownerOverride = {}, changeOwnerAfterLock
     "@/lib/datacredito/storage": {
       isDataCreditoAuditConfigured: () => true,
       getApprovedDataCreditoAssessmentForCredit: async scope => {
-        assert.equal(scope.userId, actor.id); assert.equal(scope.sellerId, null); calls.push("approved-assessment"); return assessment;
+        assert.equal(scope.userId, actor.id); assert.equal(scope.sellerId, null);
+        assert.equal(scope.solicitudId, owner.id);
+        calls.push("approved-assessment"); return assessment;
       },
-      claimDataCreditoAssessment: async () => ({ assessment, claimToken: "claim-test" }),
-      consumeDataCreditoAssessment: async () => { calls.push("consume-assessment"); return true; },
+      claimDataCreditoAssessment: async scope => {
+        assert.equal(scope.solicitudId, owner.id);
+        return { assessment, claimToken: "claim-test" };
+      },
+      consumeDataCreditoAssessment: async input => {
+        assert.equal(input.solicitudId, owner.id);
+        assert.equal(input.documentNumber, body.clienteDocumento);
+        assert.equal(input.creditId, 92);
+        calls.push("consume-assessment"); return true;
+      },
       releaseDataCreditoAssessment: noSideEffect("release-assessment"),
     },
     "@/lib/datacredito/manual-credit-limits": { resolveDataCreditoManualCreditLimit: async () => ({ maxFinancedAmount: 3_500_000, source: "POLICY" }) },
