@@ -20,7 +20,7 @@ import {
   shouldIncludeCarteraExportCredit,
 } from "@/lib/cartera-export";
 import { isAdminRole } from "@/lib/roles";
-import { readActiveMoraExtensions } from "@/lib/analyst-mora-extension";
+import { readCarteraActiveExtensionIds } from "@/lib/cartera-active-extensions";
 import prisma from "@/lib/prisma";
 import { creditDisplayNumber } from "@/lib/credit-display-number";
 import { getCreditDisplayNumbers, withCreditDisplayNumber } from "@/lib/credit-display-number-server";
@@ -271,10 +271,10 @@ export async function GET(req: Request) {
           ),
         });
       });
-    const activeExtensions = await readActiveMoraExtensions(
+    const activeExtensions = await readCarteraActiveExtensionIds(
       plannedCredits
         .filter(({ credito, plan }) => plan.saldoPendiente > 0 && !credito.pazYSalvoEmitidoAt)
-        .map(({ credito }) => credito.id),
+        .map(({ credito }) => ({ id: credito.id, clienteDocumento: credito.clienteDocumento })),
       today
     );
     const rows = plannedCredits
