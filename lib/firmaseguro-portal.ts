@@ -14,6 +14,7 @@ const EXTERNAL_SCRIPTS = new Set([
   "https://cdn.jsdelivr.net/npm/flatpickr",
   "https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/es.js",
   "https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js",
+  "https://cdn.datatables.net/v/bs5/dt-1.13.8/datatables.min.js",
 ]);
 type Stage = "READ" | "EDIT" | "RESEND";
 type ReadPhase = "BROWSER_LAUNCH" | "CONTEXT" | "FIRST_NAVIGATION" | "LOGIN_EMAIL" | "LOGIN_PASSWORD" | "LIST_VERIFICATION";
@@ -102,6 +103,30 @@ function hasFolio(value: string, folio: string) {
     position = haystack.indexOf(needle, position + 1);
   }
   return false;
+}
+function matchesProcessFilter(body: string | null, identification: string, folio: string) {
+  // Observed AjaxPostArrayAndValue encoding. Inspect in memory only; never log the form or its token.
+  if (!body || body.length > 16_384) return false;
+  const params = new URLSearchParams(body);
+  if (params.getAll("pagina").length !== 1 || params.get("pagina") !== "1") return false;
+  const filters = new Map<string, { Column?: string; Value?: string }>();
+  const seen = new Set<string>();
+  for (const [key, value] of params) {
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (!key.startsWith("FilterVM")) continue;
+    const match = /^FilterVM\[(\d+)\]\[(Column|Value)\]$/.exec(key);
+    if (!match) return false;
+    const filter = filters.get(match[1]) || {};
+    filter[match[2] as "Column" | "Value"] = value;
+    filters.set(match[1], filter);
+  }
+  const values = [...filters.values()];
+  return values.every(filter => filter.Column !== undefined && filter.Value !== undefined) &&
+    values.filter(filter => filter.Column === "Identification").length === 1 &&
+    values.filter(filter => filter.Column === "FileName").length === 1 &&
+    values.some(filter => filter.Column === "Identification" && filter.Value === identification) &&
+    values.some(filter => filter.Column === "FileName" && filter.Value === folio);
 }
 async function one(locator: Locator, message = "La estructura del portal cambió. Requiere revisión técnica.") {
   if (await locator.count() !== 1) failure("PORTAL_STRUCTURE_CHANGED", message);
@@ -294,6 +319,16 @@ async function openPortalAccess() {
       failure("PORTAL_LOGIN_FAILED", "No se pudo verificar el acceso al listado del portal.");
     for (const selector of ["#SearchIdentification", "#SearchFileName", "#btnFilterProcess"])
       await visibleOne(page.locator(selector));
+    try {
+      await page.waitForFunction(() => {
+        const jquery = (globalThis as typeof globalThis & { jQuery?: { fn?: { DataTable?: unknown } } }).jQuery;
+        return typeof jquery?.fn?.DataTable === "function";
+      }, undefined, { timeout: TIMEOUT });
+    } catch {
+      await guardPage();
+      failure("PORTAL_STRUCTURE_CHANGED", "No se confirmó la biblioteca de búsqueda del portal.");
+    }
+    await guardPage();
     return { page, guardPage, settle, close };
   } catch (error) {
     await close();
@@ -489,13 +524,50 @@ export async function openFirmaSeguroPortalRecipient(input: FirmaSeguroPortalRec
   }
 
   try {
-    await (await visibleOne(page.locator("#SearchIdentification"))).fill(expected.identity.identification);
-    await (await visibleOne(page.locator("#SearchFileName"))).fill(expected.folio);
-    await (await visibleOne(page.locator("#btnFilterProcess"))).click();
-    await settle();
+    const identificationFilter = await visibleOne(page.locator("#SearchIdentification"));
+    const folioFilter = await visibleOne(page.locator("#SearchFileName"));
+    await identificationFilter.fill(expected.identity.identification);
+    await folioFilter.fill(expected.folio);
+    const verifyFilters = async () => {
+      if (await identificationFilter.inputValue() !== expected.identity.identification ||
+        await folioFilter.inputValue() !== expected.folio)
+        failure("PORTAL_PROCESS_MISMATCH", "Los filtros del portal cambiaron durante la búsqueda.");
+    };
+    await verifyFilters();
+    const filterButton = await visibleOne(page.locator("#btnFilterProcess"));
+    // Observe the request emitted by the UI; never call the provider's filter endpoint ourselves.
+    // networkidle may already be satisfied while the previous table is still on screen.
+    const [filterResponse] = await Promise.all([
+      page.waitForResponse(response => response.url() === ORIGIN + "/Process/Filter" &&
+        response.request().method() === "POST" && response.request().frame() === page.mainFrame() &&
+        matchesProcessFilter(response.request().postData(), expected.identity.identification, expected.folio), { timeout: TIMEOUT }),
+      filterButton.click(),
+    ]);
+    await guardPage();
+    if (filterResponse.status() !== 200 || await filterResponse.finished())
+      failure("PORTAL_STRUCTURE_CHANGED", "No se confirmó el resultado de la búsqueda del portal.");
+    const result: unknown = await filterResponse.json();
+    if (!result || typeof result !== "object" || !("lista" in result) || !Array.isArray(result.lista) || result.lista.length !== 1)
+      failure("PORTAL_STRUCTURE_CHANGED", "La búsqueda no identifica un único proceso de firma.");
+    const match: unknown = result.lista[0];
+    const filteredProcessId = match && typeof match === "object" && "id" in match &&
+      (typeof match.id === "string" || typeof match.id === "number") ? positiveId(String(match.id)) : null;
+    if (!filteredProcessId)
+      failure("PORTAL_PROCESS_MISMATCH", "No se pudo identificar el proceso del portal.");
+    // cargarTabla(result.lista) draws DataTables after the response. Require that exact result in the DOM,
+    // rather than accepting a stale row, a hidden duplicate, or a transient first match.
+    await page.waitForFunction(processId => {
+      const tables = document.querySelectorAll("#myTable");
+      if (tables.length !== 1 || !tables[0].classList.contains("dataTable")) return false;
+      const rows = tables[0].querySelectorAll("tr[data-process-id]");
+      return rows.length === 1 && rows[0].getAttribute("data-process-id") === processId;
+    }, filteredProcessId, { timeout: TIMEOUT });
+    await guardPage();
+    await verifyFilters();
     const row = await one(page.locator("#myTable tr[data-process-id]"), "La búsqueda no identifica un único proceso de firma.");
     const processId = positiveId(await row.getAttribute("data-process-id"));
-    if (!processId) failure("PORTAL_PROCESS_MISMATCH", "No se pudo identificar el proceso del portal.");
+    if (!processId || processId !== filteredProcessId)
+      failure("PORTAL_PROCESS_MISMATCH", "No se pudo identificar el proceso del portal.");
     await verifyFolio(row, false);
     const detail = await one(row.locator(`a[href="/Process/Details/${processId}"]`));
     detailUrl = ORIGIN + `/Process/Details/${processId}`;

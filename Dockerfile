@@ -136,6 +136,7 @@ COPY --from=builder /app/lib/solicitudes-export-schema-statements.json ./lib/sol
 COPY --from=builder /app/lib/firmaseguro-draft-administration-schema.json ./lib/firmaseguro-draft-administration-schema.json
 COPY --from=builder /app/scripts/generated/firmaseguro-portal.mjs ./scripts/generated/firmaseguro-portal.mjs
 COPY --from=builder /app/scripts/verify-firmaseguro-portal-runtime.mjs ./scripts/verify-firmaseguro-portal-runtime.mjs
+COPY --from=builder /app/scripts/verify-firmaseguro-portal-draft.mjs ./scripts/verify-firmaseguro-portal-draft.mjs
 COPY --from=builder /app/scripts/start-finserpay.mjs ./scripts/start-finserpay.mjs
 
 RUN chown -R node:node /app/.next /home/node

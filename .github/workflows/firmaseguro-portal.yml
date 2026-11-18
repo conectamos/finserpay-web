@@ -90,6 +90,7 @@ jobs:
           tests/firmaseguro-browser-worker.test.mjs
           tests/firmaseguro-browser-packaging.test.mjs
           tests/firmaseguro-portal-runtime.test.mjs
+          tests/firmaseguro-portal-draft-probe.test.mjs
           tests/firmaseguro-portal-startup.test.mjs
           tests/firmaseguro-portal-rollout.test.mjs
           tests/firmaseguro-recipient-api.test.mjs
@@ -102,3 +103,22 @@ jobs:
           tests/credit-approval-operations-ui.test.mjs
       - name: Compilar producción con configuración ficticia
         run: npm run build
+
+  synthetic-browser:
+    name: Chromium sintético sin proveedor
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      FIRMASEGURO_PORTAL_SYNTHETIC_BROWSER_TEST: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      # All documents, filters and accounts in this job are synthetic loopback fixtures.
+      - run: node --test tests/firmaseguro-portal.test.mjs

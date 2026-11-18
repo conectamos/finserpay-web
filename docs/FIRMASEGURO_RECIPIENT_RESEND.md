@@ -29,6 +29,26 @@ deshabilitado. La configuración se lee de sus indicadores explícitos, no del
 método de autenticación **OTP Whatsapp**. Una configuración desconocida, mixta
 o cambiada bloquea la operación; no se modifica para forzar el envío.
 
+### Búsqueda y comprobación de lectura
+
+La búsqueda del portal carga los resultados con DataTables. Se permite únicamente
+la URL observada `https://cdn.datatables.net/v/bs5/dt-1.13.8/datatables.min.js`,
+con las mismas restricciones de tipo de recurso y redirecciones. La comprobación
+de acceso exige que esta biblioteca esté disponible. El buscador espera la
+respuesta al POST emitido por el botón **Buscar**, vinculada al mismo marco,
+cédula, folio y página, y después el dibujo de ese único proceso en la tabla.
+Una tabla anterior, respuesta incompleta o resultado ambiguo impide editar o reenviar.
+
+`node scripts/verify-firmaseguro-portal-draft.mjs` permite una comprobación puntual
+de lectura del driver compilado real. Exige Linux sin privilegios, Playwright
+1.65.0, el navegador privado y una conexión `DB_URL` con sesión de solo lectura
+verificada. Requiere `FIRMASEGURO_VERIFY_DRAFT_ID`,
+`FIRMASEGURO_VERIFY_SIGNATURE_ID`, `FIRMASEGURO_VERIFY_IDENTIFICATION` y
+`FIRMASEGURO_VERIFY_FOLIO`, obtenidos y comprobados en el expediente y el portal.
+Valida el proceso vigente y la identidad congelada antes de abrir el documento;
+no guarda contactos ni ejecuta edición o reenvío. Su salida contiene solo códigos
+de resultado, etapa e incertidumbre. No se ejecuta en el arranque normal.
+
 El historial guarda el contacto anterior leído del portal (`PORTAL_READBACK`),
 el contacto solicitado, `afterContact.transport: "PORTAL"` y
 `afterContact.configuredNotificationChannel: "WHATSAPP"`. Una edición sin
