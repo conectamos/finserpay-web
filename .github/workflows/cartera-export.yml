@@ -1,0 +1,53 @@
+name: Excel de cartera
+
+on:
+  pull_request:
+    paths:
+      - "app/api/dashboard/cartera/export/**"
+      - "lib/cartera-*.ts"
+      - "lib/mora-block-exemptions.ts"
+      - "lib/mora-block-protection.ts"
+      - "tests/cartera-*.test.mjs"
+      - "package*.json"
+      - ".github/workflows/cartera-export.yml"
+  push:
+    branches: [main]
+    paths:
+      - "app/api/dashboard/cartera/export/**"
+      - "lib/cartera-*.ts"
+      - "lib/mora-block-exemptions.ts"
+      - "lib/mora-block-protection.ts"
+      - "tests/cartera-*.test.mjs"
+      - "package*.json"
+      - ".github/workflows/cartera-export.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cartera-export-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Cartera y compilación
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/build_only?schema=public
+      SESSION_SECRET: build-only-session-secret
+      NEXT_TELEMETRY_DISABLED: "1"
+      FIRMASEGURO_PORTAL_RESEND_ENABLED: "false"
+      FIRMASEGURO_PORTAL_VERIFY_ACCESS_ON_START: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run prisma:generate
+      - run: npm run test:cartera
+      - run: npm run build

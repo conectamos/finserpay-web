@@ -117,7 +117,7 @@ function rowCells(row) {
 }
 
 function actualPlanRoute({ credits = [], central = true, now = "2026-11-14T04:30:00.000Z",
-  readActiveMoraExtensions = async ids => new Map(ids.includes(101) ? [[101, { id: "fixture-extension" }]] : []) } = {}) {
+  readCarteraActiveExtensionIds = async candidates => new Set(candidates.some(credit => credit.id === 101) ? [101] : []) } = {}) {
   const calls = { queries: [], plans: [], extensions: [], currentInstants: 0 };
   class ExportDate extends Date {
     constructor(...args) { super(...(args.length ? args : [now])); if (!args.length) calls.currentInstants++; }
@@ -138,8 +138,8 @@ function actualPlanRoute({ credits = [], central = true, now = "2026-11-14T04:30
     "@/lib/cartera-access": carteraAccess,
     "@/lib/credit-display-number": displayNumber,
     "@/lib/credit-display-number-server": { getCreditDisplayNumbers: async () => new Map(), withCreditDisplayNumber: credit => credit },
-    "@/lib/analyst-mora-extension": { readActiveMoraExtensions: async (ids, today) => {
-      calls.extensions.push({ ids: Array.from(ids), today }); return readActiveMoraExtensions(ids, today);
+    "@/lib/cartera-active-extensions": { readCarteraActiveExtensionIds: async (candidates, today) => {
+      calls.extensions.push({ candidates: Array.from(candidates), today }); return readCarteraActiveExtensionIds(candidates, today);
     } },
     "@/lib/roles": roles,
     "@/lib/prisma": { default: { credito: { findMany: async query => {
@@ -181,6 +181,7 @@ async function extensionSqlFixture(t) {
     CREATE TABLE "CreditoAbono" ("creditoId" INTEGER, "valor" NUMERIC, "estado" TEXT, "fechaAbono" TIMESTAMP);
     CREATE TABLE "ExcepcionBloqueoMora" ("documento" TEXT, "activa" BOOLEAN, "fechaFin" TIMESTAMP);`);
   const reads = [];
+  const exemptions = loadRoute({ "@/lib/prisma": { default: {} } }, "lib/mora-block-exemptions.ts");
   const extensions = loadRoute({
     "server-only": {},
     "@/lib/prisma": { default: { $queryRawUnsafe: async (sql, ...values) => {
@@ -188,8 +189,9 @@ async function extensionSqlFixture(t) {
       return (await database.query(sql, values)).rows;
     } } },
     "@/lib/colombia-date": colombiaDates,
-    "@/lib/mora-exception-schema": { ensureMoraExceptionRequestSchema: async () => {} },
-  }, "lib/analyst-mora-extension.ts");
+    "@/lib/mora-block-exemptions": exemptions,
+    "@/lib/mora-block-protection": { ensureMoraBlockProtectionTables: async () => {} },
+  }, "lib/cartera-active-extensions.ts");
   async function add(creditoId, patch = {}) {
     const row = { type: "PRORROGA", status: "APPROVED", source: "ANALYST_REQUEST", expiresOn: "2026-11-16",
       promiseAmount: 200, promiseDate: "2026-11-16", ...patch };
@@ -200,10 +202,10 @@ async function extensionSqlFixture(t) {
     [randomUUID(), creditoId, row.type, row.status, row.source, row.expiresOn,
       row.status === "PENDING" ? null : "2026-11-16T15:00:00Z", row.promiseAmount, row.promiseDate]);
   }
-  return { database, reads, add, readActiveMoraExtensions: extensions.readActiveMoraExtensions };
+  return { database, reads, add, readCarteraActiveExtensionIds: extensions.readCarteraActiveExtensionIds };
 }
 
-test("ambos Excel usan prórrogas reales vigentes por crédito y el mismo corte Bogotá sin excluir filas", async t => {
+test("ambos Excel incluyen excepciones y prórrogas vigentes con el mismo corte Bogotá sin excluir filas", async t => {
   const sql = await extensionSqlFixture(t);
   const requests = [
     [101, {}], [102, { expiresOn: "2026-11-15" }], [103, { status: "CANCELLED" }],
@@ -214,6 +216,7 @@ test("ambos Excel usan prórrogas reales vigentes por crédito y el mismo corte 
     [114, {}], [115, {}], [116, {}],
     [118, { source: "SYSTEM_DIANA_REQUEST", expiresOn: "2026-11-17", promiseAmount: null, promiseDate: null }],
     [119, { expiresOn: "2026-11-17", promiseDate: "2026-11-17" }], [120, {}],
+    [161, { type: "EXCEPCION", expiresOn: "2026-11-21" }],
   ];
   for (const [id, patch] of requests) await sql.add(id, patch);
   await sql.database.exec(`INSERT INTO "CreditoAbono" VALUES
@@ -222,8 +225,14 @@ test("ambos Excel usan prórrogas reales vigentes por crédito y el mismo corte 
     (119,200,'ANULADO','2026-11-16 20:00:00'),
     (119,200,'ACTIVO','2026-11-15 19:00:00'),
     (119,200,'ACTIVO','2026-11-17 06:00:00');
-    INSERT INTO "ExcepcionBloqueoMora" VALUES ('10000000112',TRUE,NULL);`);
-  const credits = Array.from({ length: 20 }, (_, index) => weeklyCredit(101 + index, {
+    INSERT INTO "ExcepcionBloqueoMora" VALUES
+      ('10000000112',TRUE,NULL),
+      ('10000000121',TRUE,'2026-11-17 04:59:59.998'),
+      ('10000000122',FALSE,NULL),
+      ('10000000123',TRUE,'2026-11-17 05:00:00.000'),
+      ('10000000125',TRUE,'2026-11-17 05:00:00.001'),
+      ('',TRUE,NULL);`);
+  const credits = Array.from({ length: 61 }, (_, index) => weeklyCredit(101 + index, {
     abonos: [], contratoSnapshot: { equipo: { plataforma: index === 14 ? "ANDROID" : "IPHONE" } },
   }));
   const byId = new Map(credits.map(credit => [credit.id, credit]));
@@ -234,34 +243,48 @@ test("ambos Excel usan prórrogas reales vigentes por crédito y el mismo corte 
   byId.get(116).estado = "CANCELADO";
   byId.get(120).estado = "ANULADO";
   byId.get(117).clienteDocumento = byId.get(101).clienteDocumento;
+  byId.get(124).clienteDocumento = " 10.000.000.112 ";
+  byId.get(126).clienteDocumento = null;
   const ledgerBefore = (await sql.database.query('SELECT * FROM "CreditMoraExceptionRequest" ORDER BY "creditoId"')).rows;
+  const legacyBefore = (await sql.database.query('SELECT * FROM "ExcepcionBloqueoMora" ORDER BY "documento"')).rows;
   const financialBefore = JSON.stringify(credits);
-  for (const now of ["2026-11-17T04:59:59.999Z", "2026-11-17T05:00:00.000Z"]) {
+  for (const now of ["2026-11-17T04:59:59.999Z", "2026-11-17T05:00:00.000Z", "2026-11-17T05:00:00.001Z"]) {
     for (const scope of ["cartera", "mora"]) {
       const readCount = sql.reads.length;
-      const f = actualPlanRoute({ credits, now, readActiveMoraExtensions: sql.readActiveMoraExtensions });
+      const f = actualPlanRoute({ credits, now, readCarteraActiveExtensionIds: sql.readCarteraActiveExtensionIds });
       const result = await f.get(scope, "&plataforma=IPHONE");
-      assert.equal(result.rows.length, scope === "cartera" ? 17 : 16);
+      assert.equal(result.rows.length, scope === "cartera" ? 58 : 57,
+        "La descarga incluye todas las filas autorizadas, también después de las páginas de 25");
       assert.equal(result.headers.filter(header => header === EXTENSION_HEADER).length, 1);
       assert.equal(f.calls.currentInstants, 1);
       assert.equal(f.calls.extensions.length, 1);
-      assert.equal(sql.reads.length, readCount + 1, "Una consulta SQL real de prórrogas por descarga");
+      assert.equal(sql.reads.length, readCount + 1, "Una consulta SQL real de excepciones y prórrogas por descarga");
       assert.ok(f.calls.plans.every(plan => plan.today === f.calls.extensions[0].today));
-      assert.deepEqual(f.calls.extensions[0].ids.slice().sort((a, b) => a - b),
+      assert.deepEqual(f.calls.extensions[0].candidates.map(credit => credit.id).sort((a, b) => a - b),
         credits.filter(credit => ![114, 115, 116, 120].includes(credit.id)).map(credit => credit.id));
-      const activeIds = new Set([110, 111, 118, 119, ...(now.endsWith("59.999Z") ? [101] : [])]);
+      assert.deepEqual(JSON.parse(JSON.stringify(f.calls.extensions[0].candidates)),
+        credits.filter(credit => ![114, 115, 116, 120].includes(credit.id))
+          .map(({ id, clienteDocumento }) => ({ id, clienteDocumento })),
+        "Se cruzan los IDs y documentos de los mismos créditos visibles sin consultar otros clientes");
+      const activeIds = new Set([110, 111, 112, 118, 119, 124, 125, 161,
+        ...(now.endsWith("59.999Z") ? [101, 108, 109] : []),
+        ...(!now.endsWith("00.001Z") ? [123] : [])]);
       for (const row of result.rows) {
         const cells = rowCells(row);
         assert.equal(cells.length, result.headers.length);
         const id = Number(cells[result.headers.indexOf("Folio original")].replace("CARTERA-", ""));
         assert.equal(cells.at(-1), activeIds.has(id) ? "SI" : "NO", `Crédito ${id}, ${scope}, ${now}`);
       }
+      assert.equal(result.rows.filter(row => rowCells(row).at(-1) === "SI").length, activeIds.size,
+        "Todas las excepciones y prórrogas simultáneas quedan señaladas, incluida la última fila");
       if (scope === "cartera") assert.equal(rowCells(result.rows.find(row => row.includes("CARTERA-114"))).at(-1), "NO");
       assert.equal(sql.reads.at(-1).values[1], now.endsWith("59.999Z") ? "2026-11-16" : "2026-11-17");
+      assert.equal(sql.reads.at(-1).values[2], now, "Las excepciones antiguas conservan su instante UTC exacto de vencimiento");
     }
   }
   assert.ok(sql.reads.every(read => read.sql.startsWith("SELECT")), "Consultar no cambia aprobaciones ni pagos");
   assert.deepEqual((await sql.database.query('SELECT * FROM "CreditMoraExceptionRequest" ORDER BY "creditoId"')).rows, ledgerBefore);
+  assert.deepEqual((await sql.database.query('SELECT * FROM "ExcepcionBloqueoMora" ORDER BY "documento"')).rows, legacyBefore);
   assert.equal(JSON.stringify(credits), financialBefore);
 });
 
@@ -272,7 +295,7 @@ test("Excel general muestra SI para prórroga anticipada el 16 de noviembre con 
     fechaPrimerPago: new Date("2026-11-17T00:00:00Z"),
     fechaProximoPago: new Date("2026-11-17T00:00:00Z"), abonos: [],
   })];
-  const options = { credits, now: "2026-11-16T20:00:00Z", readActiveMoraExtensions: sql.readActiveMoraExtensions };
+  const options = { credits, now: "2026-11-16T20:00:00Z", readCarteraActiveExtensionIds: sql.readCarteraActiveExtensionIds };
   const general = actualPlanRoute(options);
   const result = await general.get("cartera");
   assert.equal(result.rows.length, 1);
@@ -280,7 +303,7 @@ test("Excel general muestra SI para prórroga anticipada el 16 de noviembre con 
   assert.equal(cells[result.headers.indexOf("Fecha proxima cuota a pagar")], "2026-11-17");
   assert.equal(cells[result.headers.indexOf("Dias vencidos")], "-1", "Conserva el cálculo existente para la cuota de mañana");
   assert.equal(cells[result.headers.indexOf(EXTENSION_HEADER)], "SI");
-  assert.deepEqual(general.calls.extensions[0].ids, [101]);
+  assert.deepEqual(general.calls.extensions[0].candidates.map(credit => credit.id), [101]);
   assert.equal(sql.reads.length, 1, "El SI proviene de la consulta real de la prórroga aprobada");
   assert.equal(sql.reads[0].values[1], "2026-11-16");
 
@@ -288,7 +311,7 @@ test("Excel general muestra SI para prórroga anticipada el 16 de noviembre con 
   const overdue = await mora.get("mora");
   assert.equal(overdue.rows.length, 0, "Una prórroga activa no convierte una cuota futura en mora");
   assert.equal(overdue.headers.at(-1), EXTENSION_HEADER);
-  assert.deepEqual(mora.calls.extensions[0].ids, []);
+  assert.deepEqual(mora.calls.extensions[0].candidates, []);
   assert.equal(sql.reads.length, 1, "No se consultan autorizaciones de filas fuera del alcance de mora");
 });
 
@@ -455,7 +478,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
   ];
   let overdue = false;
   const extensionCalls = [];
-  let activeExtensions = new Map();
+  let activeExtensions = new Set();
   let findManyQuery = null;
   const displayNumberCalls = [];
   let sessionUser = {
@@ -548,9 +571,9 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
       },
       withCreditDisplayNumber: (credit, numbers) => ({ ...credit, numeroCreditoVisible: numbers.get(credit.id) || credit.folio }),
     },
-    "@/lib/analyst-mora-extension": {
-      readActiveMoraExtensions: async (ids, effectiveAt) => {
-        extensionCalls.push({ ids: Array.from(ids), effectiveAt });
+    "@/lib/cartera-active-extensions": {
+      readCarteraActiveExtensionIds: async (candidates, effectiveAt) => {
+        extensionCalls.push({ candidates: Array.from(candidates), effectiveAt });
         return activeExtensions;
       },
     },
@@ -715,7 +738,7 @@ test("GET exporta cartera activa y pagada, excluye anulados y conserva tasas por
       aliadoAccesoId: 1,
     };
     overdue = true;
-    activeExtensions = new Map([[5, { id: "fixture-approved-extension" }]]);
+    activeExtensions = new Set([5]);
     credits[0].clienteDocumento = "100.000.001";
     credits.push(
       creditFixture(5, "MORA"),
