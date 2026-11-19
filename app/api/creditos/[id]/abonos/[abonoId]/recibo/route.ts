@@ -201,6 +201,9 @@ export async function GET(
     const historicalTerms = await getCreditPlanTermsAtDate(abono.creditoId, abono.createdAt);
     const receiptCredit = historicalTerms ? {
       ...abono.credito,
+      // The monetary cut was recorded after this receipt. Reconstruct its old
+      // ordinary plan instead of applying the later correction to earlier cash.
+      planCapitalVigente: null,
       montoCredito: historicalTerms.montoCredito,
       valorCuota: historicalTerms.valorCuota,
       plazoMeses: historicalTerms.plazoMeses,
@@ -286,7 +289,7 @@ export async function GET(
     }
     const isPriorToPrincipalCut = Boolean(
       currentSnapshot?.abonosAlCorte.some((item) => item.id === abono.id) &&
-      !receiptSnapshot && !auditedPlanView
+      !receiptSnapshot && !auditedPlanView && !historicalTerms
     );
     // Never replay an earlier receipt against a later reamortization snapshot.
     const currentPlan = receiptSnapshot

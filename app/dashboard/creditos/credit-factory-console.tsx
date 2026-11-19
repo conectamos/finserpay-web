@@ -73,6 +73,7 @@ import { createPortal } from "react-dom";
 import FinserBrand from "@/app/_components/finser-brand";
 import ConfirmDialog from "@/app/_components/finser-confirm-dialog";
 import CreditPrincipalPaymentPanel from "@/app/dashboard/creditos/credit-principal-payment-panel";
+import CreditHistoricalPlanCorrectionPanel from "@/app/dashboard/creditos/credit-historical-plan-correction-panel";
 import {
   Button,
   Card,
@@ -20065,6 +20066,18 @@ export default function CreditFactoryConsole({
                                   {updatingPlan ? "Guardando plan..." : "Ajustar plan de pagos"}
                                 </button>
                               </div>
+                              {canSeeInternalPricing ? <CreditHistoricalPlanCorrectionPanel
+                                key={`historical-plan-${selectedCredit.id}`}
+                                creditId={selectedCredit.id}
+                                revisionKey={JSON.stringify([selectedCredit.updatedAt, selectedCredit.totalAbonado, selectedCredit.ultimoAbonoAt])}
+                                disabled={updatingPlan || runningCommand !== null || registeringPayment || loadingPayments || paymentBlockedByAnnulment}
+                                onBusyChange={setPrincipalPaymentBusy}
+                                onApplied={async () => {
+                                  await loadCredits(true, activeSearch);
+                                  await loadPayments(selectedCredit.id);
+                                  setNotice({ tone: "emerald", text: "Plan histórico corregido. Los recibos y movimientos de caja se conservaron." });
+                                }}
+                              /> : null}
                             </div>
                           ) : null}
 </div>

@@ -8,6 +8,7 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, { alias: { "@": path.resolve(import.meta.dirname, "..") } });
 const { buildCreditPaymentPlan } = await jiti.import("../lib/credit-payment-plan.ts");
+const { parseCapitalPlanSnapshot } = await jiti.import("../lib/credit-principal-payment.ts");
 const { getPaymentFrequencyLabel } = await jiti.import("../lib/credit-factory.ts");
 const source = readFileSync(new URL("../app/api/creditos/[id]/abonos/[abonoId]/recibo/route.ts", import.meta.url), "utf8");
 const code = ts.transpileModule(source, {
@@ -23,6 +24,7 @@ const revisionAt = new Date("2026-10-03T12:00:00Z");
 
 function receiptFixture({ registeredAt = "2026-10-02T12:00:00Z", paymentAt = "2026-10-02T12:00:00Z",
   missing = false, anonymous = false, corrupt = false,
+  historicalCapitalCut = false,
   historicalNextDue = originalTerms.fechaProximoPago } = {}) {
   const historyReads = [], pdfInputs = [], planInputs = [], scopedReads = [];
   const credit = {
@@ -39,8 +41,23 @@ function receiptFixture({ registeredAt = "2026-10-02T12:00:00Z", paymentAt = "20
     estado: "ACTIVO", observacion: "Prueba sin datos reales", vendedor: null,
     usuario: { nombre: "Usuario de prueba", usuario: "qa" }, sede: credit.sede,
   };
+  if (historicalCapitalCut) {
+    credit.planCapitalVigente = {
+      version: "CAPITAL_REDUCCION_PLAZO_V1", revision: 1, numeroCuotasOriginal: 8,
+      requiereConciliacionTasaPeriodo: true,
+      totalAbonadoAlCorte: 100000, abonosAlCorte: [{ id: 7, valor: 100000 }], saldoCapitalAlCorte: 560000,
+      parametros: { capitalPendiente: 560000, tasaPeriodo: 0, cuotaCredito: 80000,
+        fianzaCuota: 0, seguroCuota: 0, numeroProximaCuota: 2, fuente: "Corrección histórica de prueba sin datos reales" },
+      cuotas: Array.from({ length: 8 }, (_, index) => ({
+        numero: index + 1, fechaVencimiento: `2027-${String(index + 1).padStart(2, "0")}-17`,
+        valorProgramado: 80000, valorAbonadoAlCorte: index === 0 ? 80000 : 0, eliminada: false,
+        ...(index > 0 ? { capital: 80000, interes: 0, fianza: 0, seguro: 0, saldoCapital: (7 - index) * 80000 } : {}),
+      })),
+    };
+  }
   const recordsBefore = structuredClone({ credit, payment });
   const prisma = {
+    $queryRaw: async () => [],
     creditoAbono: {
       findFirst: async query => { scopedReads.push(query); return missing ? null : payment; },
       findMany: async () => [payment],
@@ -56,7 +73,7 @@ function receiptFixture({ registeredAt = "2026-10-02T12:00:00Z", paymentAt = "20
       planInputs.push(input);
       return buildCreditPaymentPlan({ ...input, today: "2026-10-13" });
     } },
-    "@/lib/credit-principal-payment": { parseCapitalPlanSnapshot: () => null },
+    "@/lib/credit-principal-payment": { parseCapitalPlanSnapshot },
     "@/lib/credit-audit-receipt": { auditedReceiptPlanView: () => null, readAuditedReceiptAllocation: async () => null },
     "@/lib/credit-factory": { getPaymentFrequencyLabel },
     "@/lib/prisma": { default: prisma },
@@ -158,4 +175,19 @@ test("an invalid historical revision cannot silently print the new operative pla
   assert.equal(f.pdfInputs.length, 0);
   assert.equal(f.planInputs.length, 0);
   assert.deepEqual(f.credit, f.recordsBefore.credit);
+});
+
+test("a preserved receipt prints its original plan even after a later historical monetary cut", async () => {
+  const f = receiptFixture({ historicalCapitalCut: true });
+  assert.equal((await f.get()).status, 200);
+  assert.equal(f.planInputs.length, 1);
+  assert.equal(f.planInputs[0].planCapitalVigente, null);
+  assert.equal(f.planInputs[0].plazoMeses, 4);
+  assert.equal(f.planInputs[0].valorCuota, 100000);
+  assert.equal(f.pdfInputs[0].presentation.operationalRows.find(row => row.label === "Cuotas pagadas").value, "1 DE 4");
+  assert.equal(f.pdfInputs[0].presentation.upcomingInstallments[0].date, "17/10/2026");
+  assert.equal(f.pdfInputs[0].presentation.upcomingInstallments[0].amount, 100000);
+  assert.equal(f.pdfInputs[0].paymentAmount, 100000);
+  assert.deepEqual(f.credit, f.recordsBefore.credit);
+  assert.deepEqual(f.payment, f.recordsBefore.payment);
 });

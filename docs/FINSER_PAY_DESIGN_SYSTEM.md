@@ -196,6 +196,15 @@ motivo antes de confirmar. La revisión conserva el contrato, la amortización
 original y los abonos; el expediente y el plan de pagos muestran los valores
 vigentes, y los recibos anteriores conservan las condiciones de su registro.
 
+La corrección de cartera histórica importada se presenta dentro de Gestionar
+crédito y sólo al administrador central. Solicita plazo total, cuotas reconocidas,
+valor, frecuencia, próximo vencimiento y motivo. Antes de confirmar muestra el
+calendario, el saldo futuro, los recaudos conservados y cualquier diferencia
+histórica que no se aplicará a cuotas futuras. Distingue el total nominal del
+calendario del total operativo que conserva los recaudos anteriores. La revisión
+guarda su responsable y ambas versiones, sin sustituir recibos ni movimientos de
+caja. Una confirmación incierta se recupera con su misma clave, sin repetirla.
+
 ### Tablas y documentos
 
 - Las tablas priorizan lectura, alineacion numerica y estados escaneables.

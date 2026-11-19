@@ -279,3 +279,53 @@ test("historical operational terms fail closed on corrupt dates, amounts and mis
   await f.db.query('UPDATE "CreditPaymentPlanRevision" SET "beforeSnapshot"=$2::jsonb WHERE "id"=$1', [saved.id, JSON.stringify(operationalTerms(original, { fechaProximoPago: null }))]);
   assert.equal((await getCreditPlanTermsAtDate(72, "2026-09-01T15:00:00Z", f.client)).fechaProximoPago, null);
 });
+
+test("receipt terms merge historical corrections with French revisions without treating a correction as amortization", async t => {
+  const f = await fixture(t);
+  await f.db.exec(`CREATE TABLE "CreditHistoricalPlanCorrection" (
+    "id" TEXT PRIMARY KEY, "creditoId" INTEGER NOT NULL, "beforeSnapshot" JSONB NOT NULL,
+    "createdAt" TIMESTAMP NOT NULL
+  )`);
+  const original = stored();
+  const revised = revise(original, { numeroCuotas: 24 });
+  const correctedTerms = operationalTerms(original, { plazoMeses: 48, valorCuota: 106000 });
+  const later = await f.save(revised, { beforeSnapshot: correctedTerms });
+  await f.db.query('UPDATE "CreditPaymentPlanRevision" SET "createdAt"=$2::timestamp WHERE "id"=$1', [later.id, "2026-10-05T15:00:00Z"]);
+  await f.db.query(`INSERT INTO "CreditHistoricalPlanCorrection" VALUES
+    ('historical-one',72,$1::jsonb,'2026-10-01T15:00:00Z'),
+    ('other-credit',99,$2::jsonb,'2026-09-01T15:00:00Z')`,
+  [JSON.stringify({ credit: operationalTerms(original), abonos: [{ id: 5, valor: 123000 }] }), JSON.stringify({ credit: correctedTerms })]);
+
+  const before = await getCreditPlanTermsAtDate(72, "2026-09-30T15:00:00Z", f.client);
+  assert.equal(before.plazoMeses, 16);
+  assert.equal(before.valorCuota, Number(original.cuotaComercial));
+  assert.equal("abonos" in before, false);
+  const between = await getCreditPlanTermsAtDate(72, "2026-10-03T15:00:00Z", f.client);
+  assert.equal(between.plazoMeses, 48);
+  assert.equal(between.valorCuota, 106000);
+  assert.equal((await getCreditPlanTermsAtDate(72, "2026-10-01T15:00:00Z", f.client)).plazoMeses, 48);
+  assert.equal(await getCreditPlanTermsAtDate(72, "2026-10-06T15:00:00Z", f.client), null);
+  assert.deepEqual(copy(await getLatestCreditPlanAmortization(72, f.client)), copy(revised));
+
+  await f.db.query('UPDATE "CreditHistoricalPlanCorrection" SET "beforeSnapshot"=$1::jsonb WHERE "id"=$2', [JSON.stringify({ credit: { ...operationalTerms(original), montoCredito: "corrupt" } }), "historical-one"]);
+  await assert.rejects(getCreditPlanTermsAtDate(72, "2026-09-30T15:00:00Z", f.client), /decimal/);
+  await f.db.query('UPDATE "CreditHistoricalPlanCorrection" SET "beforeSnapshot"=$1::jsonb WHERE "id"=$2', [JSON.stringify({ missingCredit: true }), "historical-one"]);
+  await assert.rejects(getCreditPlanTermsAtDate(72, "2026-09-30T15:00:00Z", f.client), /históricos/);
+});
+
+test("the optional correction table cannot change numeric French revision order at equal timestamps", async t => {
+  const f = await fixture(t);
+  await f.db.exec(`CREATE TABLE "CreditHistoricalPlanCorrection" (
+    "id" TEXT PRIMARY KEY, "creditoId" INTEGER NOT NULL, "beforeSnapshot" JSONB NOT NULL,
+    "createdAt" TIMESTAMP NOT NULL
+  )`);
+  const original = stored();
+  const first = revise(original, { numeroCuotas: 24 });
+  const firstRow = await f.save(first, { beforeSnapshot: operationalTerms(original) });
+  const second = revise(first, { numeroCuotas: 30 });
+  const secondRow = await f.save(second, { beforeSnapshot: operationalTerms(first) });
+  await f.db.query('UPDATE "CreditPaymentPlanRevision" SET "id"=10 WHERE "id"=$1', [secondRow.id]);
+  await f.db.query('UPDATE "CreditPaymentPlanRevision" SET "id"=2 WHERE "id"=$1', [firstRow.id]);
+  await f.db.query('UPDATE "CreditPaymentPlanRevision" SET "createdAt"=$1::timestamp', ["2026-10-01T15:00:00Z"]);
+  assert.equal((await getCreditPlanTermsAtDate(72, "2026-09-30T15:00:00Z", f.client)).plazoMeses, 16);
+});
