@@ -86,7 +86,7 @@ export default function AdminCentralDashboard({ adminCentral, aliadoNombre, data
     ][] = [...(adminCentral && isAdminRole(rolUsuario) ? [["Comisiones", "/dashboard/comisiones"], ["Aliados", "/dashboard/aliados"], ["Lista negra", "/dashboard/lista-negra"]] as [
             string,
             string
-        ][] : []), ["Sedes", "/dashboard/sedes"], ["Usuarios", "/dashboard/usuarios"], ...(isAdminRole(rolUsuario) ? [["Catálogo de equipos", "/dashboard/catalogo-equipos"]] as [string, string][] : []), ...(adminCentral ? [["Parámetros de crédito", "/dashboard/parametros-credito"]] as [
+        ][] : []), ["Sedes", "/dashboard/sedes"], ["Usuarios", "/dashboard/usuarios"], ...(isAdminRole(rolUsuario) ? [["Catálogo de equipos", "/dashboard/catalogo-equipos"]] as [string, string][] : []), ...(!adminCentral && isAdminRole(rolUsuario) ? [["Cupos de consultas", "/dashboard/cupos-consultas"]] as [string, string][] : []), ...(adminCentral ? [["Parámetros de crédito", "/dashboard/parametros-credito"]] as [
             string,
             string
         ][] : [])];
