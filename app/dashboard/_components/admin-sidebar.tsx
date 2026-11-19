@@ -245,6 +245,9 @@ export default function AdminSidebar({
               },
             ]
           : []),
+        ...(!adminCentral && isAdminRole(rolUsuario)
+          ? [{ href: "/dashboard/cupos-consultas", icon: Settings, label: "Cupos de consultas" }]
+          : []),
         ...(adminCentral
           ? [
               {

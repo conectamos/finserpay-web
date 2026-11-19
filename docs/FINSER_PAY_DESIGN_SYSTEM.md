@@ -400,6 +400,16 @@ no inicia evaluaciones del proveedor ni genera consultas pagas.
 
 ## Parámetros de crédito
 
+El administrador del aliado accede desde Administración a «Cupos de consultas».
+La vista presenta únicamente su aliado y sus sedes activas, con el tope general,
+el consumo del día y el cupo pendiente de asignar. El tope y el modo de distribución
+son de solo lectura. Editar cupos por sede requiere que la distribución ya esté
+habilitada por FINSER PAY y conserva el consumo de cada sede y del aliado.
+Antes de guardar, `ConfirmDialog` resume la nueva distribución. Un cambio
+concurrente exige recargar y revisar; una respuesta incierta ofrece consultar
+el estado antes de enviar otra modificación. Se reutilizan la navegación,
+los controles y los tokens compartidos, sin exponer políticas de crédito.
+
 Las cuatro pestañas de `/dashboard/parametros-credito` comparten cabecera blanca,
 tarjetas con borde fino y los controles de `finser-ui`. Los indicadores del
 catálogo forman una franja grafito y reflejan el estado real de la integración.

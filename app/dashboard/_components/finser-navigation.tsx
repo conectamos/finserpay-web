@@ -32,6 +32,7 @@ export default function FinserNavigation({admin,adminCentral,isSupervisor=false,
     ...(adminCentral ? [["Comisiones", "/dashboard/comisiones"], ["Aliados", "/dashboard/aliados"], ["¿Dónde comprar?", "/dashboard/comercios-publicos"], ["Lista negra", "/dashboard/lista-negra"]] as Item[] : []),
     ["Sedes", "/dashboard/sedes"], ["Usuarios", "/dashboard/usuarios"],
     ...(admin ? [["Catálogo de equipos", "/dashboard/catalogo-equipos"]] as Item[] : []),
+    ...(admin && !adminCentral && isAdminRole(rolUsuario) ? [["Cupos de consultas", "/dashboard/cupos-consultas"]] as Item[] : []),
     ...(adminCentral ? [["Parámetros de crédito", "/dashboard/parametros-credito"]] as Item[] : []),
   ];
   const portfolio: Item[] = [

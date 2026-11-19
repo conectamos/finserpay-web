@@ -1077,6 +1077,8 @@ export async function setDataCreditoBranchDailyQuotas(input: {
   actorUserId: number;
   requestCorrelationId: string;
   reason?: string | null;
+  /** Own-ally administrators may redistribute an already enabled budget only. */
+  allyRedistributionOnly?: boolean;
 }) {
   await ensureDataCreditoSchema();
   if (!Number.isSafeInteger(input.allyId) || input.allyId <= 0 ||
@@ -1087,15 +1089,22 @@ export async function setDataCreditoBranchDailyQuotas(input: {
   const drafts = parseDataCreditoBranchDailyQuotas(input.branches);
   const reason = String(input.reason || "").replace(/\s+/g, " ").trim();
   if (reason.length > 240) throw new DataCreditoBranchDailyQuotaValidationError("El motivo del cambio no puede superar 240 caracteres.");
+  if (input.allyRedistributionOnly && (input.enabled !== true || input.expectedEnabled !== true)) {
+    throw new DataCreditoBranchDailyQuotaValidationError("El administrador del aliado solo puede redistribuir cupos ya habilitados.");
+  }
 
   return prisma.$transaction(async (transaction) => {
-    const allies = await transaction.$queryRawUnsafe<Array<{ dailyQueryLimit: number | null; branchQuotaEnabled: boolean }>>(`
+    const allies = await transaction.$queryRawUnsafe<Array<{ dailyQueryLimit: number | null; branchQuotaEnabled: boolean; active?: boolean }>>(`
       SELECT "dataCreditoDailyQueryLimit" AS "dailyQueryLimit",
         "dataCreditoBranchQuotaEnabled" AS "branchQuotaEnabled"
+        ${input.allyRedistributionOnly ? ', "activo" AS "active"' : ""}
       FROM "Aliado" WHERE "id" = $1 FOR UPDATE
     `, input.allyId);
     const current = allies[0];
     if (!current) throw new Error("DATACREDITO_ALLY_NOT_FOUND");
+    if (input.allyRedistributionOnly && (current.active !== true || current.branchQuotaEnabled !== true)) {
+      throw new DataCreditoBranchDailyQuotaConflictError("La distribución no está habilitada para este aliado. Solicita al administrador central que revise la configuración.");
+    }
     if (current.dailyQueryLimit !== expectedDailyQueryLimit || current.branchQuotaEnabled !== input.expectedEnabled) {
       throw new DataCreditoBranchDailyQuotaConflictError();
     }
@@ -1124,10 +1133,12 @@ export async function setDataCreditoBranchDailyQuotas(input: {
     if (current.branchQuotaEnabled === input.enabled && drafts.every((draft, index) => draft.dailyLimit === activeBranches[index].dailyQueryLimit)) {
       return { allyId: input.allyId, enabled: input.enabled, branches: limits };
     }
-    await transaction.$executeRawUnsafe(`
-      UPDATE "Aliado" SET "dataCreditoBranchQuotaEnabled" = $2,
-        "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1
-    `, input.allyId, input.enabled);
+    if (!input.allyRedistributionOnly) {
+      await transaction.$executeRawUnsafe(`
+        UPDATE "Aliado" SET "dataCreditoBranchQuotaEnabled" = $2,
+          "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = $1
+      `, input.allyId, input.enabled);
+    }
     for (const branch of limits) {
       await transaction.$executeRawUnsafe(`
         UPDATE "Sede" SET "dataCreditoDailyQueryLimit" = $2,
