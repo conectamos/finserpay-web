@@ -80,7 +80,8 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/build_only?schema=public
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Full financial, document and UI suites can use twenty minutes before build.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

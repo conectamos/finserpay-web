@@ -298,6 +298,25 @@ export async function getCreditPlanTermsAtDate(
   const creditoId = integer(creditoIdInput, "creditoId");
   const instant = date instanceof Date ? new Date(date) : new Date(String(date));
   if (Number.isNaN(instant.getTime())) throw new Error("La fecha del registro del abono no es válida.");
+  // A deployment can read older databases before the optional correction table
+  // has been installed. Never require a historical correction to look like a
+  // French amortization merely to preserve its earlier receipt terms.
+  const tables = await db.$queryRawUnsafe<Array<{ historicalCorrections: boolean }>>(
+    `SELECT to_regclass('public."CreditHistoricalPlanCorrection"') IS NOT NULL AS "historicalCorrections"`
+  );
+  if (tables[0]?.historicalCorrections) {
+    const rows = await db.$queryRawUnsafe<Array<{ beforeSnapshot: unknown }>>(
+      `SELECT "beforeSnapshot" FROM (
+        SELECT "beforeSnapshot", "createdAt", 0 AS "source", "id"::bigint AS "sequenceOrder", "id"::text AS "revisionKey"
+        FROM "CreditPaymentPlanRevision" WHERE "creditoId" = $1 AND "createdAt" > $2::timestamp
+        UNION ALL
+        SELECT "beforeSnapshot"->'credit' AS "beforeSnapshot", "createdAt", 1 AS "source", NULL::bigint AS "sequenceOrder", "id"::text AS "revisionKey"
+        FROM "CreditHistoricalPlanCorrection" WHERE "creditoId" = $1 AND "createdAt" > $2::timestamp
+      ) revisions ORDER BY "createdAt" ASC, "source" ASC, "sequenceOrder" ASC NULLS LAST, "revisionKey" ASC LIMIT 1`,
+      creditoId, instant.toISOString()
+    );
+    return rows.length ? operationalSnapshot(rows[0].beforeSnapshot) : null;
+  }
   const rows = await db.$queryRawUnsafe<Array<{ beforeSnapshot: unknown }>>(
     `SELECT "beforeSnapshot" FROM "CreditPaymentPlanRevision"
      WHERE "creditoId" = $1 AND "createdAt" > $2::timestamp
