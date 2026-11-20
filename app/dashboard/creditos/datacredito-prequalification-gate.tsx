@@ -494,6 +494,7 @@ function TechnicalErrorPanel({
   const requiresReview = conflictCode === "ASSESSMENT_REQUIRES_REVIEW";
   const administrativelyRejected = conflictCode === "ADMINISTRATIVE_REJECTION";
   const responseRequiresReview = conflictCode === "NO_EVALUABLE_INFORMATION";
+  const conciseOutcome = administrativelyRejected || responseRequiresReview;
   const evaluationInProgress = conflictCode === "EVALUATION_IN_PROGRESS";
   const operationInProgress = conflictCode === "SOLICITUD_OPERATION_IN_PROGRESS";
   if (consumedCreditId) {
@@ -551,10 +552,14 @@ function TechnicalErrorPanel({
             id="datacredito-technical-error-title"
             className="text-xl font-black text-[var(--fp-graphite)]"
           >
-            {administrativelyRejected ? "Solicitud rechazada por FINSER" : responseRequiresReview ? "Respuesta pendiente de revisión" : requiresReview ? "Consulta pendiente de revisión" : evaluationInProgress ? "Consulta en proceso" : operationInProgress ? "Solicitud en proceso" : conflictMessage ? "La consulta requiere atención" : "No se pudo evaluar"}
+            {administrativelyRejected ? "Solicitud rechazada" : responseRequiresReview ? "Solicitud pendiente de revisión" : requiresReview ? "Consulta pendiente de revisión" : evaluationInProgress ? "Consulta en proceso" : operationInProgress ? "Solicitud en proceso" : conflictMessage ? "La consulta requiere atención" : "No se pudo evaluar"}
           </h2>
           <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
-            {conflictMessage || "Ocurrió un inconveniente técnico. Esta situación no significa que la solicitud haya sido rechazada."}
+            {administrativelyRejected
+              ? "No es posible continuar con esta solicitud."
+              : responseRequiresReview
+                ? "La solicitud requiere revisión de FINSER PAY."
+                : conflictMessage || "Ocurrió un inconveniente técnico. Esta situación no significa que la solicitud haya sido rechazada."}
           </p>
           {evaluationInProgress ? (
             <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
@@ -562,17 +567,17 @@ function TechnicalErrorPanel({
               Solicita revisión administrativa; no repitas la consulta.
             </p>
           ) : null}
-          {requiresReview || responseRequiresReview ? (
+          {requiresReview && !conciseOutcome ? (
             <p className="mt-2 text-sm leading-6 text-[var(--fp-muted)]">
               Solicita la revisión administrativa de la consulta existente antes de continuar.
             </p>
           ) : null}
-          {conflictCode ? (
+          {conflictCode && !conciseOutcome ? (
             <p className="mt-3 break-all text-xs text-[var(--fp-muted)]">
               Motivo: <code>{conflictCode}</code>
             </p>
           ) : null}
-          {correlationId ? (
+          {correlationId && !conciseOutcome ? (
             <p className="mt-3 break-all text-xs text-[var(--fp-muted)]">
               Código de seguimiento: <code>{correlationId}</code>
             </p>
@@ -608,13 +613,13 @@ function TechnicalErrorPanel({
             Volver a solicitudes
           </Link>
         )}
-        <Link
+        {!conciseOutcome ? <Link
           href="/dashboard/creditos"
           className="fp-ui-button is-ghost focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--fp-lime)]"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Volver a créditos
-        </Link>
+        </Link> : null}
       </div>
     </Card>
   );

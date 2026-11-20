@@ -868,9 +868,11 @@ function renderTechnicalErrorState(harness) {
   return renderToStaticMarkup(element);
 }
 
-test("un rechazo administrativo muestra su origen y detiene los reintentos del asesor", async () => {
+test("un rechazo administrativo muestra un resultado breve y detiene los reintentos del asesor", async () => {
   const harness = createGateHarness({
-    responses: [{ status: 409, body: { ok: false, code: "ADMINISTRATIVE_REJECTION", status: "NO_EVALUADO" } }],
+    responses: [{ status: 409, body: { ok: false, code: "ADMINISTRATIVE_REJECTION", status: "NO_EVALUADO",
+      error: "Detalle administrativo que se conserva para administración.",
+      correlationId: "11111111-2222-4333-8444-555555555555" } }],
     callbacks: ["submitAssessment", "retryTechnicalFailure"],
     overrides: { documentNumber: "00123456789", firstSurname: "PRUEBA" },
   });
@@ -878,8 +880,12 @@ test("un rechazo administrativo muestra su origen y detiene los reintentos del a
   assert.equal(harness.state.view, "technical-error");
   assert.equal(harness.state.conflictCode, "ADMINISTRATIVE_REJECTION");
   const html = renderTechnicalErrorState(harness);
-  assert.ok(html.includes("Solicitud rechazada por FINSER"));
-  assert.ok(html.includes("información insuficiente"));
+  assert.ok(html.includes("Solicitud rechazada"));
+  assert.ok(html.includes("No es posible continuar con esta solicitud."));
+  for (const hidden of ["ADMINISTRATIVE_REJECTION", "NO_EVALUADO", "Código de seguimiento", "11111111-2222-4333-8444-555555555555", "Detalle administrativo", "información insuficiente", "Volver a créditos"]) {
+    assert.ok(!html.includes(hidden), `El resultado del asesor no expone ${hidden}`);
+  }
+  assert.equal(html.match(/<a\b/g)?.length, 1);
   for (const action of ["Continuar solicitud", "Corregir datos", "Revisar disponibilidad", "Revisar resultado guardado"]) assert.ok(!html.includes(action));
   harness.functions.retryTechnicalFailure();
   await harness.functions.submitAssessment({ preventDefault() {} });
@@ -954,14 +960,13 @@ function assertSavedResponseReviewPanel(harness) {
     correlationId: harness.state.correlationId, consumedCreditId: null,
     onRetry() { assert.fail("A retained provider response requires review before any retry"); },
   }));
-  assert.ok(html.includes("Respuesta pendiente de revisión"));
-  assert.ok(html.includes("NO_EVALUABLE_INFORMATION"));
-  assert.ok(html.includes(safeNoEvaluableMessage));
-  assert.ok(html.includes("Solicita la revisión administrativa"));
+  assert.ok(html.includes("Solicitud pendiente de revisión"));
+  assert.ok(html.includes("La solicitud requiere revisión de FINSER PAY."));
+  assert.ok(!html.includes("Solicitud rechazada"), "Una respuesta incompleta conserva la revisión humana pendiente");
   assert.ok(html.includes('href="/dashboard/solicitudes?q=123456789"'));
   assert.ok(html.includes("Volver a solicitudes"));
-  assert.ok(html.includes('href="/dashboard/creditos"'));
-  for (const forbidden of ["Revisar disponibilidad", "Continuar solicitud", "Corregir datos", "Revisar resultado guardado", "No se pudo evaluar", "Sensitive provider detail"]) {
+  assert.equal(html.match(/<a\b/g)?.length, 1);
+  for (const forbidden of ["Revisar disponibilidad", "Continuar solicitud", "Corregir datos", "Revisar resultado guardado", "No se pudo evaluar", "Sensitive provider detail", "NO_EVALUABLE_INFORMATION", safeNoEvaluableMessage, "Solicita la revisión administrativa", "Código de seguimiento", "retained-response-get", "retained-response-post", "Volver a créditos"]) {
     assert.ok(!html.includes(forbidden), `The review state must not expose ${forbidden}`);
   }
 }
@@ -984,6 +989,25 @@ test("GET 422 NO_EVALUABLE_INFORMATION conserva un motivo seguro y no ofrece otr
   await harness.functions.submitAssessment({ preventDefault() {} });
   assert.equal(harness.requests.length, 1, "Reviewing a retained response never starts a POST or repeats bootstrap");
   assert.equal(harness.state.view, "technical-error");assert.equal(harness.approvals.length, 0);
+});
+
+test("los fallos temporales conservan su explicación y la acción de revisar disponibilidad", () => {
+  const ui = loadJsxModule(sharedUi);
+  const Panel = loadJsxModule(realDeclaration("TechnicalErrorPanel") + "\nmodule.exports = TechnicalErrorPanel;", {}, {
+    ...ui, ...icons, Link: ({ children, ...props }) => React.createElement("a", props, children),
+  });
+  for (const conflictCode of ["PROVIDER_TIMEOUT", "DATACREDITO_NOT_CONFIGURED", "AUTHENTICATION_FAILED"]) {
+    const html = renderToStaticMarkup(React.createElement(Panel, {
+      conflictCode, conflictMessage: "El servicio no respondió. Revisa la disponibilidad.",
+      canRetryBootstrap: true, correlationId: "temporary-failure-tracking", consumedCreditId: null,
+      onRetry() { assert.fail("Renderizar un fallo temporal nunca reintenta la consulta"); },
+    }));
+    assert.ok(html.includes("El servicio no respondió."));
+    assert.ok(html.includes("Revisar disponibilidad"));
+    assert.ok(html.includes(conflictCode));
+    assert.ok(html.includes("temporary-failure-tracking"));
+    assert.ok(!html.includes("Solicitud rechazada"));
+  }
 });
 
 test("POST 422 NO_EVALUABLE_INFORMATION muestra revisión de la respuesta guardada y no reenvía ni aprueba", async () => {
