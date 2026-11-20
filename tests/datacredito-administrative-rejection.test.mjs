@@ -109,6 +109,7 @@ test('preflight exige metadata presente y no nula antes de acceder a decisiones 
       module: loaded, exports: loaded.exports,
       DataCreditoStorageConfigurationError: SchemaError,
       verifyDataCreditoPolicyProfileSchema: async () => {}, verifyDataCreditoDailyQuotaSchema: async () => {},
+      verifyDataCreditoBranchDailyQuotaSchema: async () => {},
       prisma: { $queryRawUnsafe: async sql => {
         if (sql.includes('FROM pg_attribute')) return columns;
         if (sql.includes('AS "adminAuditTable"')) return [{
