@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import ts from "typescript";
 import { createJiti } from "jiti";
 import { PGlite } from "@electric-sql/pglite";
+import { SecondCreditAuthorizationError } from "../lib/second-credit-authorization-core.ts";
 const jiti = createJiti(import.meta.url);
 const { createDataCreditoClient, DataCreditoError: RealDataCreditoError } = await jiti.import("../lib/datacredito/client.ts");
 
@@ -298,6 +299,12 @@ function evaluationFixture(options = {}) {
     },
   };
   const dependencies = {
+    "@/lib/second-credit-authorization-core": { SecondCreditAuthorizationError },
+    "@/lib/second-credit-authorization": { assertSecondCreditEligibility: async () => {
+      record("second-credit-before-provider");
+      if (options.secondCreditBeforeProviderError) throw options.secondCreditBeforeProviderError;
+      return null;
+    } },
     "@/lib/datacredito/admin-rejection-storage": {
       findRecentDataCreditoAdministrativeRejection: async () => options.administrativeRejection || null,
     },
@@ -368,6 +375,7 @@ function evaluationFixture(options = {}) {
       getActiveSolicitudCreditContext: async () => owner,
       reserveSolicitudForIdentity: async input => {
         record("solicitud", input);
+        if (options.draftReservationError) throw options.draftReservationError;
         owner.clienteDocumento = input.clienteDocumento;
         owner.clientePrimerApellido = input.clientePrimerApellido;
         owner.plataforma = input.plataforma;
@@ -441,6 +449,20 @@ test("el endpoint conserva ceros iniciales, tildes, ñ y apellidos compuestos al
   assert.equal(provider.documentNumber, "0001234567890");
   assert.equal(provider.firstSurname, "DE LA PEÑA");
   assert.ok(api.calls.find(call => call.name === "reserve").input.consentAt instanceof Date);
+  assert.equal(api.state.locked, false);
+});
+
+test("un fallo verificando segundo crédito responde 503 antes de reservar evaluación o consultar al proveedor", async () => {
+  const api = evaluationFixture({ draftReservationError: new SecondCreditAuthorizationError(
+    "SECOND_CREDIT_AUTHORIZATION_UNAVAILABLE", "No fue posible verificar la autorización", 503
+  ) });
+  const response = await api.request({});
+  const body = await response.json();
+  assert.equal(response.status, 503);
+  assert.equal(body.code, "SECOND_CREDIT_AUTHORIZATION_UNAVAILABLE");
+  for (const name of ["provider", "provider-dispatch", "reserve", "complete", "fail-before-provider"]) {
+    assert.equal(api.calls.filter(call => call.name === name).length, 0, name);
+  }
   assert.equal(api.state.locked, false);
 });
 
@@ -604,6 +626,34 @@ test("OAuth fallido sin despacho devuelve el cupo, deja duración NULL y no crea
         assert.equal(api.state.locked, false);
       });
     }
+  } finally { await f.pg.close(); }
+});
+
+test("revocación o tercer crédito antes del despacho devuelve ambos cupos sin consultar ni fingir un rechazo", async t => {
+  const f = await compensationDatabase();
+  try {
+    for (const code of ["ACTIVE_CREDIT_EXISTS", "SECOND_CREDIT_LIMIT_REACHED"]) await t.test(code, async () => {
+      await f.reset();
+      const api = evaluationFixture({
+        secondCreditBeforeProviderError: new SecondCreditAuthorizationError(code, "La autorización cambió antes de consultar", 409),
+        compensate: f.failDataCreditoAssessmentBeforeProviderDispatch,
+      });
+      const response = await api.request({});
+      const body = await response.json();
+      assert.equal(response.status, 409);
+      assert.equal(body.code, code);
+      assert.equal(api.calls.filter(call => call.name === "provider").length, 0);
+      assert.equal(api.calls.filter(call => call.name === "provider-dispatch").length, 0);
+      assert.equal(api.calls.filter(call => call.name === "fail-before-provider").length, 1);
+      assert.equal(api.calls.filter(call => call.name === "fail").length, 0);
+      assert.equal((await f.pg.query('SELECT "usedCount" FROM "DataCreditoDailyQuotaUsage"')).rows[0].usedCount, 0);
+      assert.equal((await f.pg.query('SELECT "usedCount" FROM "DataCreditoBranchDailyQuotaUsage"')).rows[0].usedCount, 0);
+      const row = (await f.pg.query('SELECT status,"errorCode","durationMs" FROM "DataCreditoAssessment"')).rows[0];
+      assert.equal(row.status, "NO_EVALUADO");
+      assert.equal(row.errorCode, code);
+      assert.equal(row.durationMs, null);
+      assert.equal(api.state.locked, false);
+    });
   } finally { await f.pg.close(); }
 });
 

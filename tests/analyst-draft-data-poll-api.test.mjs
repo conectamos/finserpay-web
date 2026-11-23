@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { PGlite } from "@electric-sql/pglite";
 import { isDirectSalesProfile } from "../lib/solicitud-operation-access.ts";
+import { SecondCreditAuthorizationError } from "../lib/second-credit-authorization-core.ts";
 
 const source = readFileSync(new URL("../app/api/creditos/borradores/route.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, {
@@ -57,6 +58,10 @@ function fixture({ user = { id: 4, rolNombre: "VENDEDOR", aliadoId: 7 },
   let globalMaintenance = 0;
   const dependencies = {
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
+    "@/lib/datacredito/customer-identity": {},
+    "@/lib/second-credit-authorization-core": { SecondCreditAuthorizationError },
+    "@/lib/credit-client-step": {},
+    "@/lib/credit-imei-confirmation": { ImeiConfirmationError: class extends Error {} },
     "@/lib/document-blacklist": { assertDocumentNotBlacklisted: async (document) => {
       blacklistDocuments.push(document);
       if (document === "bloqueado") throw Object.assign(new Error("bloqueado"), { blacklist: true });
@@ -104,6 +109,8 @@ test("el asesor titular recibe revisiones y valores financieros corregidos en SQ
     analystFinancialCorrection: correction.analystFinancialCorrection,
     analystEvidenceRevision: correction.analystEvidenceRevision,
     analystEvidenceCorrection: correction.analystEvidenceCorrection,
+    firmaSeguroClientCorrectionPending: null,
+    firmaSeguroClientCorrectionId: null,
   } } });
   assert.ok(JSON.stringify(body).length < 1_000);
   assert.equal(f.queries.length, 1);

@@ -5,6 +5,8 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import ts from "typescript";
 import { selectCanonicalSolicitudesByDocument } from "../lib/solicitudes.ts";
+import { loadStore } from "./second-credit-authorization-fixture.mjs";
+import { secondCreditAuthorizationSchemaStatements } from "../scripts/second-credit-authorization-schema.mjs";
 
 const source = readFileSync(new URL("../lib/solicitudes-storage.ts", import.meta.url), "utf8");
 const ast = ts.createSourceFile("solicitudes-storage.ts", source, ts.ScriptTarget.Latest, true);
@@ -21,6 +23,7 @@ test("un crédito pagado libera la cédula globalmente sin borrar el histórico 
   const pg = new PGlite();
   t.after(() => pg.close());
   await pg.exec(`
+    CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY);
     CREATE TABLE "Credito" (
       "id" integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       "estado" text NOT NULL DEFAULT 'GENERADO', "clienteDocumento" text,
@@ -50,11 +53,13 @@ test("un crédito pagado libera la cédula globalmente sin borrar el histórico 
     $executeRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).affectedRows,
   });
   const loaded = { exports: {} };
+  const prisma = { $transaction: callback => pg.transaction(db => callback(adapter(db))) };
+  const secondCredit = loadStore(prisma, secondCreditAuthorizationSchemaStatements);
   runInNewContext(ts.transpileModule(implementation, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
   } }).outputText, {
     module: loaded, exports: loaded.exports,
-    prisma: { $transaction: callback => pg.transaction(db => callback(adapter(db))) },
+    prisma, ...secondCredit,
     ensureSolicitudSchema: async () => {},
     assertDocumentNotBlacklisted: async () => {},
     lockIdentity: async (_db, kind, value) => locks.push([kind, value]),
@@ -105,12 +110,13 @@ test("un crédito pagado libera la cédula globalmente sin borrar el histórico 
       ["200000001", { paid: 999.99 }],
       ["200000002", { paid: 800, initial: 200 }],
       ["200000003", { paid: 0, state: "PAGADO" }],
-      ["200000004", { paid: 0, amount: null }],
     ]) {
       await credit(document, options);
       await blocked(() => reserve(document));
       await blocked(() => reserve(document, { usuarioId: 91, vendedorId: null, sedeId: 93, plataforma: "ANDROID" }));
     }
+    await credit("200000004", { paid: 0, amount: null });
+    await assert.rejects(reserve("200000004"), { code: "SECOND_CREDIT_AUTHORIZATION_UNAVAILABLE" });
   });
 
   await t.test("un abono anulado no salda el crédito y otro crédito activo sigue bloqueando", async () => {

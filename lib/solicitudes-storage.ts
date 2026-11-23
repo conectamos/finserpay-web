@@ -3,6 +3,11 @@ import type { Prisma } from "@/app/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import {
+  ensureSecondCreditAuthorizationSchema,
+  getSecondCreditEligibility,
+  normalizeSecondCreditDocument,
+} from "@/lib/second-credit-authorization";
+import {
   assertSolicitudBlacklistDocumentsLocked,
   collectSolicitudBlacklistDocuments,
 } from "@/lib/solicitud-blacklist-locks";
@@ -879,6 +884,12 @@ async function findBlockingSolicitudByDocument(
   excludedDraftId?: number | null
 ) {
   if (!document) return null;
+  // The central authorization and the active-credit ceiling use the same
+  // balance calculation as final credit creation. Draft identity checks must
+  // not reject an explicitly authorized second credit before reaching it.
+  const eligibility = (await getSecondCreditEligibility(database, [document]))
+    .get(normalizeSecondCreditDocument(document))!;
+  const blockingCreditIds = eligibility.canCreate ? [] : eligibility.activeCreditIds;
   const rows = await database.$queryRawUnsafe<BlockingSolicitudIdentityRow[]>(
     `
       SELECT candidate.*
@@ -907,20 +918,7 @@ async function findBlockingSolicitudByDocument(
           credit."estado" AS "rawState", NULL::text AS "closedReason",
           credit."clienteDocumento", credit."createdAt"
         FROM "Credito" credit
-        WHERE regexp_replace(COALESCE(credit."clienteDocumento", ''), '[^0-9]', '', 'g') = $1
-          AND credit."estado" <> 'ANULADO'
-          AND (
-            credit."montoCredito" IS NULL
-            OR GREATEST(0::float8, credit."montoCredito") > GREATEST(
-              0::float8,
-              COALESCE((
-                SELECT SUM(payment."valor")
-                FROM "CreditoAbono" payment
-                WHERE payment."creditoId" = credit."id"
-                  AND payment."estado" <> 'ANULADO'
-              ), 0)
-            )
-          )
+        WHERE credit."id" = ANY($3::integer[])
       ) candidate
       ORDER BY CASE WHEN candidate."source" = 'CREDIT' THEN 0 ELSE 1 END,
         candidate."createdAt" DESC,
@@ -928,7 +926,8 @@ async function findBlockingSolicitudByDocument(
       LIMIT 1
     `,
     document,
-    excludedDraftId || null
+    excludedDraftId || null,
+    blockingCreditIds
   );
   return rows[0] || null;
 }
@@ -998,7 +997,7 @@ export async function reserveSolicitudForIdentity(input: {
   imei?: string | null;
   plataforma?: string | null;
 }) {
-  await ensureSolicitudSchema();
+  await Promise.all([ensureSolicitudSchema(), ensureSecondCreditAuthorizationSchema()]);
   const document = normalizeDigits(input.clienteDocumento);
   const imei = normalizeDigits(input.imei);
   const platform = normalizePlatform(input.plataforma);
@@ -1875,7 +1874,7 @@ export async function desistSolicitud(input: {
   sellerId: number | null;
   aliadoId: number;
 }) {
-  await ensureSolicitudSchema();
+  await Promise.all([ensureSolicitudSchema(), ensureSecondCreditAuthorizationSchema()]);
   await expireStaleSolicitudes();
   return prisma.$transaction(async (transaction) => {
     const target = await transaction.$queryRawUnsafe<
@@ -2024,7 +2023,7 @@ export async function desistSolicitudAsCentralAdmin(input: {
   solicitudId: number;
   userId: number;
 }) {
-  await ensureSolicitudSchema();
+  await Promise.all([ensureSolicitudSchema(), ensureSecondCreditAuthorizationSchema()]);
   await expireStaleSolicitudes();
   return prisma.$transaction(async (transaction) => {
     const target = await transaction.$queryRawUnsafe<
@@ -2146,7 +2145,7 @@ export async function desistSolicitudAsApprovalAnalyst(input: {
   ) {
     return { changed: false, identityReleased: false };
   }
-  await ensureSolicitudSchema();
+  await Promise.all([ensureSolicitudSchema(), ensureSecondCreditAuthorizationSchema()]);
   await expireStaleSolicitudes();
   return prisma.$transaction(async (transaction) => {
     // El analista actúa sobre el expediente elegido, sin cerrar otros casos

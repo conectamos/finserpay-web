@@ -6,6 +6,8 @@ import { PGlite } from "@electric-sql/pglite";
 import ts from "typescript";
 import * as access from "../lib/solicitud-operation-access.ts";
 import { getSolicitudActions } from "../lib/solicitudes.ts";
+import { loadStore } from "./second-credit-authorization-fixture.mjs";
+import { secondCreditAuthorizationSchemaStatements } from "../scripts/second-credit-authorization-schema.mjs";
 
 const read = file => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
 function declaration(file, name) {
@@ -190,19 +192,23 @@ test("desistimiento ejecuta SQL real: titular usuario, vendedor nulo, aliado y a
       "dataCreditoAssessmentId" UUID,"payload" JSONB DEFAULT '{"solicitudOrigen":"DATACREDITO"}',
       "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,"updatedAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       "closedAt" TIMESTAMPTZ,"closedReason" TEXT,"desistedByUserId" INTEGER,"desistedBySellerId" INTEGER);
-    CREATE TABLE "Credito" ("id" INTEGER,"estado" TEXT,"clienteDocumento" TEXT,"createdAt" TIMESTAMPTZ,"montoCredito" FLOAT8);
+    CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY);
+    CREATE TABLE "Credito" ("id" INTEGER,"estado" TEXT,"clienteDocumento" TEXT,"createdAt" TIMESTAMPTZ,"montoCredito" FLOAT8,
+      "cuotaInicial" FLOAT8 DEFAULT 0,"folio" TEXT DEFAULT 'FC-TEST');
     CREATE TABLE "CreditoAbono" ("creditoId" INTEGER,"valor" FLOAT8,"estado" TEXT);
     INSERT INTO "CreditoBorrador" ("id","usuarioId","vendedorId","sedeId","clienteDocumento") VALUES
       (90,7,NULL,31,'001234567'),(91,7,NULL,32,'001234567'),
       (92,8,NULL,31,'001234567'),(93,7,7,31,'001234567'),(94,7,NULL,33,'001234567');
   `);
   const locks = [];
-  const adapter = db => ({ $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows });
+  const adapter = db => ({ $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,
+    $executeRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).affectedRows });
+  const prisma = { $transaction: callback => pg.transaction(db => callback(adapter(db))) };
   const functions = load([
     declaration("lib/solicitudes-storage.ts", "findBlockingSolicitudByDocument"),
     declaration("lib/solicitudes-storage.ts", "desistSolicitud"),
   ].join("\n"), {
-    prisma: { $transaction: callback => pg.transaction(db => callback(adapter(db))) },
+    prisma, ...loadStore(prisma, secondCreditAuthorizationSchemaStatements),
     ensureSolicitudSchema: async () => {}, expireStaleSolicitudes: async () => {},
     normalizeDigits: value => String(value || "").replace(/\D/g, ""),
     lockSolicitudOperationsInOrder: async (_db, ids) => locks.push(Array.from(ids)),

@@ -744,7 +744,9 @@ test("un credito vigente o borrador no liberado bloquea globalmente la cedula, p
   );
   const creditBranch = blocker.split('FROM "Credito" credit')[1]?.split(') candidate')[0];
   assert.ok(creditBranch);
-  assert.match(creditBranch, /AND credit\."estado" <> 'ANULADO'/);
+  assert.match(blocker, /getSecondCreditEligibility\(database, \[document\]\)/);
+  assert.match(blocker, /eligibility\.canCreate \? \[\] : eligibility\.activeCreditIds/);
+  assert.match(creditBranch, /WHERE credit\."id" = ANY\(\$3::integer\[\]\)/);
   assert.doesNotMatch(creditBranch, /credit\."estado"\s*(?:=|IN)\b/);
   assert.match(reservation, /const blocker = await findBlockingSolicitudByDocument/);
   assert.match(reservation, /if \(blocker\)[\s\S]*solicitudConflictFromBlocker/);
