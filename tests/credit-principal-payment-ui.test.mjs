@@ -140,6 +140,15 @@ test("plan vigente usa el snapshot del servidor sin permitir reemplazar su conci
   assert.equal(payload.conciliacion, undefined);
 });
 
+test("un plan histórico pendiente de tasa no omite la conciliación por tener un snapshot", () => {
+  const build = harness().exports.buildPrincipalPaymentPayload;
+  const historical = { ...credit, planCapitalVigente: { requiereConciliacionTasaPeriodo: true } };
+  assert.throws(() => build(form, historical, false, true), /fuente/);
+  assert.throws(() => build({ ...form, tasaPeriodo: "" }, historical, true, true), /tasa periódica/);
+  assert.equal(build(form, historical, true, true).conciliacion.tasaPeriodo, 0.01);
+  assert.equal(build({ ...form, capitalPendiente: "1000000.25" }, historical, true, true).conciliacion.capitalPendiente, 1000000.25);
+});
+
 function readyHarness(fetchImpl, storage) {
   const runtime = harness(fetchImpl, storage);
   let applied = 0;
@@ -358,6 +367,74 @@ const contextResponse = (mode = "AUTOMATICA", patch = {}) => ({
     motivoConciliacion: mode === "MANUAL" ? "El crédito importado requiere una fuente de conciliación documentada." : null,
     capitalPendiente: mode === "MANUAL" ? null : 1000000, ...patch,
   }),
+});
+
+test("plan histórico sin tasa verificada consulta contexto y muestra la documentación con capital conservado", async () => {
+  const requests = [];
+  const runtime = harness(async (url, options) => {
+    requests.push({ method: options.method, body: options.body && JSON.parse(options.body) });
+    if (options.method === "GET") return contextResponse("MANUAL", {
+      capitalPendiente: 1000000.25, motivoConciliacion: "La tasa histórica aún no está documentada.",
+    });
+    return { ok: true, status: 200, json: async () => ({ ok: true, quoteHash,
+      quote: { ...quote, cuotaParcialConservada: { numero: 4, saldoPendiente: 25000 } } }) };
+  });
+  const props = { credit: { ...credit, planCapitalVigente: { revision: 2, requiereConciliacionTasaPeriodo: true,
+    parametros: { tasaPeriodo: 0 } } }, onApplied() {}, onBusyChange() {} };
+  let tree = runtime.render(props);
+  assert.equal(requests.length, 0);
+  button(tree, /Preparar abono/).props.onClick();
+  tree = runtime.render(props);
+  assert.equal(requests[0].method, "GET");
+  assert.equal(button(tree, /Previsualizar/).props.disabled, true);
+  assert.doesNotMatch(text(tree), /Se utiliza el capital y el plan vigente/);
+  await flush();
+  tree = runtime.render(props);
+  assert.match(text(tree), /Completar condiciones del plan histórico/);
+  assert.match(text(tree), /Los abonos anteriores y el capital pendiente se conservan/);
+  assert.equal(input(tree, "Capital pendiente conservado").props.readOnly, true);
+  assert.equal(input(tree, "Capital pendiente conservado").props.value, "1.000.000,25");
+  assert.equal(input(tree, "Tasa periódica").props.value, "", "no usar el cero provisional del snapshot");
+  assert.equal(input(tree, "Cuota de capital").props.value, "", "los componentes requieren fuente documental");
+  input(tree, "Valor adicional").props.onChange({ target: { value: "200000" } });
+  input(tree, "Ya registré").props.onChange({ target: { checked: true } });
+  tree = runtime.render(props);
+  button(tree, /Previsualizar/).props.onClick();
+  await flush();
+  assert.equal(requests.length, 1, "sin confirmar la fuente no envía una previsualización");
+  for (const [label, value] of [["Cuota de capital", "70000"], ["Aval / fianza", "29000"], ["Seguro por cuota", "1000"],
+    ["Tasa periódica", "0,01"], ["Fuente de conciliación", "Contrato original, corte y referencia verificables"]]) {
+    input(runtime.render(props), label).props.onChange({ target: { value } });
+  }
+  const checkbox = all(runtime.render(props), item => item.type === "label" && /Verifiqué el capital/.test(text(item)))[0];
+  all(checkbox, item => item.type === "input")[0].props.onChange({ target: { checked: true } });
+  button(runtime.render(props), /Previsualizar/).props.onClick();
+  await flush();
+  assert.equal(requests[1].body.conciliacion.capitalPendiente, 1000000.25);
+  assert.equal(requests[1].body.conciliacion.tasaPeriodo, 0.01);
+  assert.equal(requests[1].body.conciliacion.numeroProximaCuota, 4);
+  assert.equal(requests[1].body.accion, "PREVISUALIZAR");
+  tree = runtime.render(props);
+  assert.match(text(tree), /cuota 4 conserva su pago parcial/);
+  assert.match(text(tree), /reduce el capital de las cuotas siguientes/);
+  assert.equal(all(tree, item => item.type === "ConfirmDialog")[0].props.open, false);
+});
+
+test("fallo al verificar un plan histórico marcado no ofrece usar automáticamente sus términos", async () => {
+  const requests = [];
+  const runtime = harness(async (url, options) => {
+    requests.push(options.method);
+    return { ok: false, status: 503, json: async () => ({ error: "No se pudo consultar el crédito." }) };
+  });
+  const props = { credit: { ...credit, planCapitalVigente: { requiereConciliacionTasaPeriodo: true } },
+    initiallyExpanded: true, onApplied() {}, onBusyChange() {} };
+  runtime.render(props);
+  await flush();
+  const tree = runtime.render(props);
+  assert.deepEqual(requests, ["GET"]);
+  assert.equal(button(tree, /Previsualizar/).props.disabled, true);
+  assert.match(text(tree), /No se pudo consultar el crédito/);
+  assert.doesNotMatch(text(tree), /Se utiliza el capital y el plan vigente/);
 });
 
 function firstPaymentHarness(fetchImpl, storage) {
