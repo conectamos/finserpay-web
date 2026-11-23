@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { assertDocumentNotBlacklisted } from "@/lib/document-blacklist";
 import { documentBlacklistErrorResponse } from "@/lib/document-blacklist-response";
 import { getSessionUser } from "@/lib/auth";
+import { SecondCreditAuthorizationError } from "@/lib/second-credit-authorization-core";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { sanitizeSearch, sanitizeText } from "@/lib/credit-factory";
 import { composeCreditClientName } from "@/lib/credit-client-name";
@@ -588,6 +589,9 @@ export async function POST(req: Request) {
       console.warn("SOLICITUD_IDENTITY_SAVE_BLOCKED", { code: error.message });
       return NextResponse.json({ code: error.message, error: messages[error.message] || "No se pudo validar la identidad vinculada a la solicitud." }, { status: 409 });
     }
+    if (error instanceof SecondCreditAuthorizationError) {
+      return NextResponse.json({ code: error.code, error: error.message }, { status: error.status });
+    }
     console.error("ERROR GUARDANDO BORRADOR:", error);
     const forbidden = error instanceof Error && error.message === "SOLICITUD_NO_AUTORIZADA";
     return NextResponse.json(
@@ -657,6 +661,9 @@ export async function PATCH(req: Request) {
       { status: 405 }
     );
   } catch (error) {
+    if (error instanceof SecondCreditAuthorizationError) {
+      return NextResponse.json({ code: error.code, error: error.message }, { status: error.status });
+    }
     console.error("ERROR ACTUALIZANDO BORRADOR:", error);
     return NextResponse.json({ error: "No se pudo actualizar el borrador" }, { status: 500 });
   }

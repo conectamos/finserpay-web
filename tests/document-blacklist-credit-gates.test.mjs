@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
+import { SecondCreditAuthorizationError } from "../lib/second-credit-authorization-core.ts";
 
 const nativeRequire = createRequire(import.meta.url);
 const root = new URL("../", import.meta.url);
@@ -53,6 +54,8 @@ function fixtures({ central = false, allyId = 20, guard = async () => { throw bl
     "@/lib/solicitud-operation-access": { ...operationAccess, canOperateSolicitud: () => true },
     "@/lib/document-blacklist": { assertDocumentNotBlacklisted: async (...args) => { activity.guards += 1; return guard(...args); } },
     "@/lib/document-blacklist-response": { documentBlacklistErrorResponse: (error) => error === blockedError ? Response.json({ ok: false, code: error.code, error: error.message }, { status: error.status }) : null },
+    "@/lib/second-credit-authorization-core": { SecondCreditAuthorizationError },
+    "@/lib/second-credit-authorization": { assertSecondCreditEligibility: async () => null },
     "@/lib/credit-factory": { sanitizeText: (value) => String(value || "").trim(), toNumber: (value) => Number(value) || 0, toNullableDate: () => null },
     "@/lib/datacredito/customer-identity": { getDataCreditoCustomerIdentityForDisplay: async () => null },
     "@/lib/credit-imei-confirmation": imeiConfirmation,
@@ -160,6 +163,7 @@ test("la llamada pagada ejecuta el guard con la misma transacción antes de toca
       resolveDataCreditoConfig: () => ({ timeoutMs: 12_000 }),
       prisma: { $transaction: async (callback, options) => { assert.equal(options.timeout, 53_000); calls.push("begin"); try { return await callback(tx); } finally { calls.push("end"); } } },
       assertDocumentNotBlacklisted: async (document, db) => { assert.equal(document, "1062402825"); assert.equal(db, tx); calls.push("guard"); if (blocked) throw blockedError; },
+      assertSecondCreditEligibility: async (db, document) => { assert.equal(db, tx); assert.equal(document, "1062402825"); calls.push("second-credit"); return null; },
       queryDataCreditoNaturalPerson: async input => { input.onProviderDispatch?.();calls.push("provider"); return { providerPayload: { fixture: true } }; },
     });
     if (blocked) {
@@ -167,7 +171,7 @@ test("la llamada pagada ejecuta el guard con la misma transacción antes de toca
       assert.deepEqual(calls, ["begin", "guard", "end"]);
     } else {
       assert.equal((await run("1062402825")).providerPayload.fixture, true);
-      assert.deepEqual(calls, ["begin", "guard", "provider", "end"]);
+      assert.deepEqual(calls, ["begin", "guard", "second-credit", "provider", "end"]);
     }
   }
 });
@@ -272,6 +276,7 @@ test("el catch conserva el resultado de una consulta iniciada y responde el bloq
             dailyQuotaReservation: null,
             correlationId: "fixture-correlation",
             ActiveSolicitudConflictError: class extends Error {},
+            SecondCreditAuthorizationError,
             SolicitudDataCreditoLinkError: class extends Error {},
             DataCreditoError: class extends Error {},
             safeProviderValue: (value) => value,

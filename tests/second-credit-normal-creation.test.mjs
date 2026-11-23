@@ -69,6 +69,7 @@ function fixture({ state = { activeCredits: 1, authorized: true }, veriff = null
     solicitudReservation: { id: 7 }, creditOwner: { usuarioId: 3, vendedorId: 4, sedeId: 5 },
     creditCreateArgs: clone(originalArgs), contratoSnapshot: clone(snapshot),
     veriffValidation: veriff, firmaSeguroProcess: null, dataCreditoAssessment: null,
+    creditRiskExceptionClaim: null,
     amortizationPersistencePlan: { cuotaComercial: 99_800 }, amortizationParametersSnapshot: { financialTermsChecksum: "signed-financing-checksum" },
     assertDocumentNotBlacklisted: async (document, tx) => {
       assert.equal(document, "1065845982"); assert.equal(tx, transaction);
@@ -111,7 +112,7 @@ function fixture({ state = { activeCredits: 1, authorized: true }, veriff = null
   assert.ok(start > 0 && end > start);
   // Execute the actual transaction and post-commit section, including Next after.
   const { close } = evaluate(`async function close() { ${source.slice(start, end)} return creationResult; } exports.close = close;`, {
-    createCreditWithAmortization: create, dataCreditoClaim: null,
+    createCreditWithAmortization: create, dataCreditoClaim: null, creditRiskExceptionClaim: null,
     process: { env: voiceEnabled ? { DAPTA_WELCOME_VOICE_ENABLED: "true" } : {} },
     prisma: { $transaction: async work => {
       inTransaction = true;

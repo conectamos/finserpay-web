@@ -4,6 +4,8 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import ts from "typescript";
+import { loadStore } from "./second-credit-authorization-fixture.mjs";
+import { secondCreditAuthorizationSchemaStatements } from "../scripts/second-credit-authorization-schema.mjs";
 
 const source = readFileSync(new URL("../lib/solicitudes-storage.ts", import.meta.url), "utf8");
 function section(start, end) {
@@ -20,6 +22,7 @@ test("desistimiento del analista: SQL real, expediente seleccionado y auditoría
   const pg = new PGlite();
   t.after(() => pg.close());
   await pg.exec(`
+    CREATE TABLE "Usuario" ("id" INTEGER PRIMARY KEY);
     CREATE TABLE "CreditoBorrador" (
       "id" INTEGER PRIMARY KEY, "estado" TEXT NOT NULL DEFAULT 'ABIERTO',
       "creditoId" INTEGER, "clienteDocumento" TEXT,
@@ -36,7 +39,7 @@ test("desistimiento del analista: SQL real, expediente seleccionado y auditoría
     CREATE TABLE "Credito" (
       "id" INTEGER PRIMARY KEY, "estado" TEXT NOT NULL,
       "clienteDocumento" TEXT, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "montoCredito" FLOAT8
+      "montoCredito" FLOAT8 DEFAULT 1000, "cuotaInicial" FLOAT8 DEFAULT 0,"folio" TEXT DEFAULT 'FC-TEST'
     );
     CREATE TABLE "CreditoAbono" ("creditoId" INTEGER,"valor" FLOAT8,"estado" TEXT);
   `);
@@ -44,6 +47,7 @@ test("desistimiento del analista: SQL real, expediente seleccionado y auditoría
   let identityMutation = null;
   let failBlocker = false;
   const adapter = (db) => ({
+    $executeRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).affectedRows,
     $queryRawUnsafe: async (sql, ...values) => {
       trace.push({ kind: "sql", sql, values });
       if (failBlocker && sql.includes("SELECT candidate.*")) throw new Error("TEST_LOOKUP_FAILURE");
@@ -51,11 +55,12 @@ test("desistimiento del analista: SQL real, expediente seleccionado y auditoría
     },
   });
   const loaded = { exports: {} };
+  const prisma = { $transaction: (callback) => pg.transaction((db) => callback(adapter(db))) };
   runInNewContext(ts.transpileModule(`${blocker}\n${implementation}`, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, {
     module: loaded, exports: loaded.exports,
-    prisma: { $transaction: (callback) => pg.transaction((db) => callback(adapter(db))) },
+    prisma, ...loadStore(prisma, secondCreditAuthorizationSchemaStatements),
     ensureSolicitudSchema: async () => trace.push({ kind: "schema" }),
     expireStaleSolicitudes: async () => trace.push({ kind: "expire" }),
     normalizeDigits: (value) => String(value || "").replace(/\D/g, "").slice(0, 40),

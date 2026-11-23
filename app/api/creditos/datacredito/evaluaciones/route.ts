@@ -8,6 +8,8 @@ import { resolveDataCreditoConfig } from "@/lib/datacredito/config";
 import prisma from "@/lib/prisma";
 import { isFinserPayCentralAlly } from "@/lib/aliados";
 import { getSessionUser } from "@/lib/auth";
+import { SecondCreditAuthorizationError } from "@/lib/second-credit-authorization-core";
+import { assertSecondCreditEligibility } from "@/lib/second-credit-authorization";
 import {
   allowsDataCreditoNonProductionProvider,
   DataCreditoError,
@@ -951,11 +953,13 @@ export async function POST(request: Request) {
     };
     await storePendingDataCreditoSecureRecord(pendingSecure);
 
-    // Serialize the paid provider request with blacklist activation for this CC.
+    // Serialize the paid request with blacklist and second-credit authorization
+    // changes for this CC. Revalidate after reservation, before provider dispatch.
     // A token refresh can issue two auth requests and two provider requests.
     const providerTimeoutMs = resolveDataCreditoConfig(process.env, correlationId).timeoutMs;
     const result = await prisma.$transaction(async (transaction) => {
       await assertDocumentNotBlacklisted(documentNumber, transaction);
+      await assertSecondCreditEligibility(transaction, documentNumber);
       return await queryDataCreditoNaturalPerson({
         documentNumber,
         firstSurname,
@@ -1191,6 +1195,8 @@ export async function POST(request: Request) {
       ? safeProviderValue((error as { code?: unknown }).code, 64) || "DOCUMENT_BLACKLISTED"
       : error instanceof ActiveSolicitudConflictError
         ? error.code
+        : error instanceof SecondCreditAuthorizationError
+          ? error.code
         : error instanceof SolicitudDataCreditoLinkError
           ? error.code
           : error instanceof DataCreditoError
@@ -1265,6 +1271,11 @@ export async function POST(request: Request) {
         code: error.code,
         error: error.message,
         status: error.status,
+      });
+    }
+    if (error instanceof SecondCreditAuthorizationError) {
+      return technicalResponse({
+        correlationId, code: error.code, error: error.message, status: error.status,
       });
     }
     if (error instanceof SolicitudDataCreditoLinkError) {
