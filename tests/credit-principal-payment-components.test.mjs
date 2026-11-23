@@ -109,14 +109,15 @@ test("a later principal revision preserves the settled documented components", (
   assert.deepEqual(snapshot, original);
 });
 
-test("a new principal quote cannot turn documented partial principal into interest", () => {
+test("a new principal quote preserves documented partial principal instead of turning it into interest", () => {
   const snapshot = documentedSnapshot();
-  snapshot.parametros.tasaPeriodo = 0.4;
-  snapshot.parametros.cuotaCredito = 200;
+  snapshot.parametros.tasaPeriodo = 0.05;
   const plan = buildCreditPaymentPlan({ ...terms, planCapitalVigente: snapshot, abonos: snapshot.abonosAlCorte });
-  // The revised interest alone exceeds the partial payment, but its source includes principal.
-  assert.throws(() => createPrincipalPaymentQuote({ plan, planCapitalVigente: snapshot,
-    abonos: snapshot.abonosAlCorte, valor: 20, capitalOriginal: 470, cuotaHabitual: 223 }), /cuota parcial/);
+  const quote = createPrincipalPaymentQuote({ plan, planCapitalVigente: snapshot,
+    abonos: snapshot.abonosAlCorte, valor: 50, capitalOriginal: 470, cuotaHabitual: 123 });
+  assert.deepEqual(quote.cuotaParcialConservada, { numero: 1, saldoPendiente: 35 });
+  assert.deepEqual(quote.planCapitalVigente.cuotas[0], { ...snapshot.cuotas[0], saldoCapital: 170 });
+  assert.equal(quote.saldoCapitalDespues, 200);
 });
 
 test("audited receipts retain their original components and existing payment ids", () => {
@@ -164,6 +165,188 @@ test("an unverified rate blocks reamortization but not ordinary payments on the 
   assert.equal(getCapitalOutstandingBalance(snapshot, 285).saldoCapital, 220);
   assert.throws(() => createPrincipalPaymentQuote({ plan, planCapitalVigente: snapshot, abonos,
     valor: 50, capitalOriginal: 470, cuotaHabitual: 123 }), /Verifica la tasa periodica.*conciliacion.*nuevo abono a capital/);
+});
+
+function unverifiedRateInput() {
+  const snapshot = documentedSnapshot();
+  snapshot.requiereConciliacionTasaPeriodo = true;
+  const abonos = [...snapshot.abonosAlCorte, { id: 12, valor: 35 }];
+  return {
+    plan: buildCreditPaymentPlan({ ...terms, planCapitalVigente: snapshot, abonos }),
+    planCapitalVigente: snapshot, abonos, valor: 50, capitalOriginal: 470, cuotaHabitual: 123,
+    conciliacion: { capitalPendiente: 220, tasaPeriodo: 0.01, cuotaCredito: 100,
+      fianzaCuota: 20, seguroCuota: 3, numeroProximaCuota: 2,
+      fuente: "Contrato sintetico original, tasa quincenal documentada y verificada" },
+  };
+}
+
+test("documenting a marked historical rate creates a verified revision without rewriting paid components", () => {
+  const input = unverifiedRateInput();
+  const before = structuredClone(input);
+  const quote = createPrincipalPaymentQuote(input);
+  assert.equal(quote.saldoCapitalAntes, 220);
+  assert.equal(quote.saldoCapitalDespues, 170);
+  assert.equal(quote.planCapitalVigente.revision, 2);
+  assert.equal(quote.planCapitalVigente.requiereConciliacionTasaPeriodo, false);
+  assert.deepEqual(quote.planCapitalVigente.parametros, input.conciliacion);
+  assert.equal(quote.planCapitalVigente.cuotas[1].interes, 2, "The documented rate replaces the zero placeholder");
+  assert.deepEqual(quote.planCapitalVigente.cuotas[0], {
+    ...before.planCapitalVigente.cuotas[0], valorAbonadoAlCorte: 115,
+    componentesAbonadosAlCorte: { capital: 80, interes: 12, fianza: 20, seguro: 3 },
+  });
+  assert.ok(quote.saldoPendienteDespues + input.valor <= input.plan.saldoPendiente);
+  assert.deepEqual(input, before, "A quote must not mark the source verified or alter its payments");
+  const applied = structuredClone(quote.planCapitalVigente);
+  applied.abonosAlCorte.push({ id: 13, valor: input.valor });
+  assert.equal(parseCapitalPlanSnapshot(applied).requiereConciliacionTasaPeriodo, false);
+});
+
+test("marked historical rate reconciliation is bound to actual remaining capital and next installment", () => {
+  for (const change of [
+    { capitalPendiente: 219 }, { capitalPendiente: 221 }, { capitalPendiente: 250 },
+    { numeroProximaCuota: 1 }, { numeroProximaCuota: 3 },
+  ]) {
+    const input = unverifiedRateInput();
+    Object.assign(input.conciliacion, change);
+    assert.throws(() => createPrincipalPaymentQuote(input), /capital documentado no coincide|proxima cuota no coincide/);
+    assert.equal(input.planCapitalVigente.requiereConciliacionTasaPeriodo, true);
+  }
+});
+
+test("marked historical rate still requires complete documented terms and cannot increase the debt", () => {
+  for (const change of [
+    { tasaPeriodo: null }, { tasaPeriodo: NaN }, { fuente: "" }, { fuente: "corto" },
+    { cuotaCredito: 101 }, { tasaPeriodo: 0.9 },
+  ]) {
+    const input = unverifiedRateInput();
+    Object.assign(input.conciliacion, change);
+    assert.throws(() => createPrincipalPaymentQuote(input));
+    assert.equal(input.planCapitalVigente.requiereConciliacionTasaPeriodo, true);
+  }
+  const zeroInterest = unverifiedRateInput();
+  zeroInterest.conciliacion.tasaPeriodo = 0;
+  assert.equal(createPrincipalPaymentQuote(zeroInterest).planCapitalVigente.parametros.tasaPeriodo, 0,
+    "A documented zero rate remains valid; an absent reconciliation does not authorize the placeholder");
+  const increasedDebt = unverifiedRateInput();
+  increasedDebt.conciliacion.tasaPeriodo = 0.1;
+  assert.throws(() => createPrincipalPaymentQuote(increasedDebt), /aumentaria la obligacion total/);
+});
+
+function partiallyPaidRateInput() {
+  const input = unverifiedRateInput();
+  input.abonos.pop();
+  input.plan = buildCreditPaymentPlan({ ...terms, planCapitalVigente: input.planCapitalVigente, abonos: input.abonos });
+  input.conciliacion.capitalPendiente = 250;
+  input.conciliacion.numeroProximaCuota = 1;
+  return input;
+}
+
+test("a marked rate can be documented while keeping the entire partially paid installment and its assignments", () => {
+  const input = partiallyPaidRateInput();
+  const before = structuredClone(input);
+  const quote = createPrincipalPaymentQuote(input);
+  assert.equal(quote.saldoCapitalAntes, 250);
+  assert.equal(quote.saldoCapitalDespues, 200);
+  assert.deepEqual(quote.cuotaParcialConservada, { numero: 1, saldoPendiente: 35 });
+  assert.deepEqual(quote.planCapitalVigente.cuotas[0], { ...before.planCapitalVigente.cuotas[0], saldoCapital: 170 });
+  assert.equal(quote.planCapitalVigente.cuotas[1].capital, 98);
+  assert.equal(quote.planCapitalVigente.cuotas[1].interes, 2);
+  assert.equal(quote.planCapitalVigente.requiereConciliacionTasaPeriodo, false);
+  assert.deepEqual(input, before);
+  const abonos = [...input.abonos, { id: 13, valor: input.valor }];
+  quote.planCapitalVigente.abonosAlCorte.push(abonos.at(-1));
+  const plan = buildCreditPaymentPlan({ ...terms, montoCredito: quote.montoCreditoActualizado,
+    planCapitalVigente: quote.planCapitalVigente, abonos });
+  assert.equal(plan.saldoCapitalPendiente, 200);
+  assert.equal(plan.nextInstallment.numero, 1);
+  assert.equal(plan.nextInstallment.valorAbonado, 80, "The extraordinary payment is not an installment advance");
+  assert.equal(plan.nextInstallment.saldoPendiente, 35);
+});
+
+test("preserving a legacy partial installment freezes its existing allocation rather than reallocating old cash", () => {
+  const input = partiallyPaidRateInput();
+  delete input.planCapitalVigente.cuotas[0].componentesAbonadosAlCorte;
+  input.planCapitalVigente.saldoCapitalAlCorte = 255;
+  input.planCapitalVigente.parametros.capitalPendiente = 255;
+  input.conciliacion.capitalPendiente = 255;
+  input.plan = buildCreditPaymentPlan({ ...terms, planCapitalVigente: input.planCapitalVigente, abonos: input.abonos });
+  const quote = createPrincipalPaymentQuote(input);
+  assert.equal(quote.saldoCapitalAntes, 255);
+  assert.equal(quote.saldoCapitalDespues, 205);
+  assert.equal(quote.planCapitalVigente.cuotas[0].saldoCapital, 170);
+  assert.deepEqual(quote.planCapitalVigente.cuotas[0].componentesAbonadosAlCorte,
+    { capital: 45, interes: 12, fianza: 20, seguro: 3 });
+  quote.planCapitalVigente.abonosAlCorte.push({ id: 13, valor: input.valor });
+  const rows = resolveCapitalPlanRows(quote.planCapitalVigente, 300);
+  assert.deepEqual(rows[0].componentsPaid, { capital: 45, interes: 12, fianza: 20, seguro: 3 });
+  assert.equal(rows[0].capitalPendiente, 35);
+});
+
+test("repeated extra principal and a later ordinary payment preserve the partially paid installment", () => {
+  const input = partiallyPaidRateInput();
+  const first = createPrincipalPaymentQuote(input);
+  const abonos = [...input.abonos, { id: 13, valor: input.valor }];
+  first.planCapitalVigente.abonosAlCorte.push(abonos.at(-1));
+  const firstPlan = buildCreditPaymentPlan({ ...terms, montoCredito: first.montoCreditoActualizado,
+    planCapitalVigente: first.planCapitalVigente, abonos });
+  const second = createPrincipalPaymentQuote({ ...input, conciliacion: undefined,
+    plan: firstPlan, planCapitalVigente: first.planCapitalVigente, abonos, valor: 40 });
+  assert.equal(second.saldoCapitalAntes, 200);
+  assert.equal(second.saldoCapitalDespues, 160);
+  assert.deepEqual(second.cuotaParcialConservada, { numero: 1, saldoPendiente: 35 });
+  assert.deepEqual(second.planCapitalVigente.cuotas[0], { ...input.planCapitalVigente.cuotas[0], saldoCapital: 130 });
+  abonos.push({ id: 14, valor: 40 });
+  second.planCapitalVigente.abonosAlCorte.push(abonos.at(-1));
+  const beforeOrdinary = buildCreditPaymentPlan({ ...terms, montoCredito: second.montoCreditoActualizado,
+    planCapitalVigente: second.planCapitalVigente, abonos });
+  assert.equal(beforeOrdinary.nextInstallment.valorAbonado, 80);
+  abonos.push({ id: 15, valor: 35 });
+  const afterOrdinary = buildCreditPaymentPlan({ ...terms, montoCredito: second.montoCreditoActualizado,
+    planCapitalVigente: second.planCapitalVigente, abonos });
+  assert.equal(afterOrdinary.nextInstallment.numero, 2);
+  assert.equal(afterOrdinary.saldoCapitalPendiente, 130);
+  const rows = resolveCapitalPlanRows(second.planCapitalVigente, 375);
+  assert.deepEqual(rows[0].componentsPaid, { capital: 80, interes: 12, fianza: 20, seguro: 3 });
+  assert.equal(rows[0].valorAbonado, 115);
+  assert.deepEqual(second.planCapitalVigente.cuotas[0].componentesAbonadosAlCorte,
+    input.planCapitalVigente.cuotas[0].componentesAbonadosAlCorte);
+});
+
+test("an extra payment may settle future principal but cannot consume the pending principal of a preserved partial installment", () => {
+  const input = partiallyPaidRateInput();
+  const fullFuture = createPrincipalPaymentQuote({ ...input, valor: 220 });
+  assert.equal(fullFuture.saldoCapitalDespues, 30);
+  assert.equal(fullFuture.ultimaCuota.numero, 1);
+  assert.equal(fullFuture.cuotasEliminadas, 2);
+  assert.deepEqual(fullFuture.planCapitalVigente.cuotas[0], { ...input.planCapitalVigente.cuotas[0], saldoCapital: 0 });
+  assert.ok(fullFuture.planCapitalVigente.cuotas.slice(1).every(row => row.eliminada && row.valorProgramado === 0));
+  for (const valor of [221, 249]) {
+    assert.throws(() => createPrincipalPaymentQuote({ ...input, valor }), /capital de las cuotas futuras/);
+  }
+});
+
+test("a preserved partial installment cannot hide documented payments in later installments", () => {
+  const input = partiallyPaidRateInput();
+  input.planCapitalVigente.cuotas[1].valorAbonadoAlCorte = 10;
+  input.planCapitalVigente.cuotas[1].componentesAbonadosAlCorte = { capital: 0, interes: 10, fianza: 0, seguro: 0 };
+  input.plan = buildCreditPaymentPlan({ ...terms, montoCredito: 559,
+    planCapitalVigente: input.planCapitalVigente, abonos: input.abonos });
+  assert.throws(() => createPrincipalPaymentQuote(input), /pagos documentados en cuotas posteriores/);
+});
+
+test("later documented payments also block reamortization when the first pending installment has no payment", () => {
+  const input = partiallyPaidRateInput();
+  input.planCapitalVigente.cuotas[0].valorAbonadoAlCorte = 0;
+  delete input.planCapitalVigente.cuotas[0].componentesAbonadosAlCorte;
+  input.planCapitalVigente.cuotas[1].valorAbonadoAlCorte = 10;
+  input.planCapitalVigente.cuotas[1].componentesAbonadosAlCorte = { capital: 0, interes: 10, fianza: 0, seguro: 0 };
+  input.planCapitalVigente.saldoCapitalAlCorte = 300;
+  input.planCapitalVigente.parametros.capitalPendiente = 300;
+  input.conciliacion.capitalPendiente = 300;
+  input.plan = buildCreditPaymentPlan({ ...terms, montoCredito: 639,
+    planCapitalVigente: input.planCapitalVigente, abonos: input.abonos });
+  assert.equal(input.plan.nextInstallment.valorAbonado, 0);
+  assert.throws(() => createPrincipalPaymentQuote(input), /pagos documentados en cuotas posteriores/);
 });
 
 test("a verified rate marker survives a later principal revision", () => {

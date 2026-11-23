@@ -138,3 +138,30 @@ test("invalid revised snapshot fails closed and cannot fall back to original ter
   input.credit.planCapitalVigente = { version: "UNKNOWN" };
   assert.throws(() => resolvePrincipalPaymentContext(input), /Version/);
 });
+
+test("a historical revised plan with an undocumented rate requests reconciliation while retaining actual principal", () => {
+  const input = makeNativeCapitalFixture({ paidInstallments: 3, signed: true });
+  const source = resolvePrincipalPaymentContext(input);
+  const quote = createPrincipalPaymentQuote({ plan: input.plan, abonos: input.abonos,
+    conciliacion: source.conciliacion, valor: 500000,
+    capitalOriginal: input.credit.saldoBaseFinanciado, cuotaHabitual: input.credit.valorCuota });
+  const payment = { id: 103, valor: 500000 };
+  quote.planCapitalVigente.abonosAlCorte.push(payment);
+  quote.planCapitalVigente.requiereConciliacionTasaPeriodo = true;
+  quote.planCapitalVigente.parametros.tasaPeriodo = 0;
+  input.credit.planCapitalVigente = quote.planCapitalVigente;
+  input.credit.montoCredito = quote.montoCreditoActualizado;
+  input.abonos.push(payment);
+  input.plan = buildCreditPaymentPlan({ ...input.credit, abonos: input.abonos, today: "2030-09-20" });
+  const before = structuredClone(input);
+  const context = resolvePrincipalPaymentContext(input);
+  assert.equal(context.modoConciliacion, "MANUAL", "An existing snapshot must not hide its missing-rate requirement");
+  assert.equal(context.requiereConciliacion, true);
+  assert.equal(context.capitalPendiente, quote.saldoCapitalDespues);
+  assert.equal(context.conciliacion, null, "Neither the placeholder nor the original native rate becomes documented by fallback");
+  assert.match(context.motivoConciliacion, /tasa periódica.*no está documentada/);
+  assert.deepEqual(input, before);
+  input.credit.equalityService = "IMPORTACION_MASIVA";
+  delete input.credit.amortizacion;
+  assert.deepEqual(resolvePrincipalPaymentContext(input), context);
+});

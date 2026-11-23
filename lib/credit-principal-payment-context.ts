@@ -76,10 +76,17 @@ function check(condition: boolean) {
 /** Server-owned persisted terms only. A missing/ambiguous source never becomes an estimate. */
 export function resolvePrincipalPaymentContext(input: PrincipalPaymentContextInput): PrincipalPaymentContext {
   const { credit, plan } = input;
-  // Revised plans are already reconciled, including imported credits. Invalid snapshots fail closed.
+  // Revised plans preserve principal, including imported credits. A historical
+  // calendar correction may still require a documented rate; never use its
+  // placeholder terms to reamortize. Invalid snapshots fail closed.
   const vigente = parseCapitalPlanSnapshot(credit.planCapitalVigente);
   if (vigente) {
     const capitalPendiente = getCapitalOutstandingBalance(vigente, plan.totalPaid)!.saldoCapital;
+    if (vigente.requiereConciliacionTasaPeriodo) {
+      return { modoConciliacion: "MANUAL", requiereConciliacion: true,
+        motivoConciliacion: "Este plan histórico conserva el capital, pero su tasa periódica aún no está documentada. Verifica la tasa y los componentes de la cuota en el contrato o plan de origen antes de registrar el abono.",
+        capitalPendiente, conciliacion: null };
+    }
     const next = plan.installments.find(row => row.saldoPendiente > 0);
     return { modoConciliacion: "VIGENTE", requiereConciliacion: false, motivoConciliacion: null,
       capitalPendiente, conciliacion: { ...vigente.parametros, capitalPendiente,

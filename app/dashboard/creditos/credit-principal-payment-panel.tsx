@@ -76,6 +76,7 @@ type CapitalQuote = {
   cuotasEliminadas: number;
   saldoPendienteAntes: number;
   saldoPendienteDespues: number;
+  cuotaParcialConservada?: { numero: number; saldoPendiente: number } | null;
   planCapitalVigente: {
     cuotas: Array<{
       numero: number;
@@ -155,12 +156,17 @@ function date(value: string) {
   return day.length === 3 ? `${day[2]}/${day[1]}/${day[0]}` : value;
 }
 
+function requiresDocumentedRate(plan: unknown): boolean {
+  return Boolean(plan && typeof plan === "object" && !Array.isArray(plan) &&
+    (plan as { requiereConciliacionTasaPeriodo?: unknown }).requiereConciliacionTasaPeriodo === true);
+}
+
 export function buildPrincipalPaymentPayload(
   form: CapitalForm,
   credit: PrincipalPaymentCredit,
   sourceConfirmed: boolean,
   ordinaryPaymentsConfirmed: boolean,
-  requiereConciliacion = !credit.planCapitalVigente,
+  requiereConciliacion = !credit.planCapitalVigente || requiresDocumentedRate(credit.planCapitalVigente),
 ): PrincipalPaymentPayload {
   const valor = Number(form.valor);
   if (!Number.isSafeInteger(valor) || valor <= 0) throw new Error("Indica un abono a capital válido en pesos enteros.");
@@ -173,8 +179,9 @@ export function buildPrincipalPaymentPayload(
   if (!credit.numeroProximaCuota) throw new Error("No se encontró una próxima cuota pendiente. Actualiza los recaudos.");
   const fields = ["capitalPendiente", "cuotaCredito", "fianzaCuota", "seguroCuota"] as const;
   for (const field of fields) {
-    if (!form[field].trim() || !Number.isSafeInteger(Number(form[field])) || Number(form[field]) < 0) {
-      throw new Error("Completa capital, cuota de crédito, aval y seguro con los valores documentados en pesos enteros.");
+    const amount = Number(form[field]);
+    if (!form[field].trim() || !Number.isFinite(amount) || amount < 0 || Math.round(amount * 100) / 100 !== amount) {
+      throw new Error("Completa capital, cuota de crédito, aval y seguro con los valores documentados, con máximo dos decimales.");
     }
   }
   const tasaPeriodo = Number(form.tasaPeriodo.replace(",", "."));
@@ -226,14 +233,17 @@ export default function CreditPrincipalPaymentPanel({
   const mounted = useRef(true);
   const previewController = useRef<AbortController | null>(null);
   const submittedRequest = useRef<PrincipalConfirmationRequest | null>(recovery.request);
-  const contextKey = JSON.stringify([credit.id, credit.revisionKey, Boolean(credit.planCapitalVigente)]);
+  const ratePending = requiresDocumentedRate(credit.planCapitalVigente);
+  const contextKey = JSON.stringify([credit.id, credit.revisionKey, Boolean(credit.planCapitalVigente), ratePending]);
   const currentContextKey = useRef(contextKey);
   currentContextKey.current = contextKey;
   const currentContext = context?.key === contextKey ? context.data : null;
   const currentContextError = contextFailure?.key === contextKey ? contextFailure.message : "";
-  const needsContext = !credit.planCapitalVigente && !retryPending && !recovery.error && !success;
-  const contextReady = Boolean(credit.planCapitalVigente) || Boolean(currentContext);
-  const requiresManual = !credit.planCapitalVigente && currentContext?.requiereConciliacion === true;
+  const needsContext = (!credit.planCapitalVigente || ratePending) && !retryPending && !recovery.error && !success;
+  const contextReady = (Boolean(credit.planCapitalVigente) && !ratePending) || Boolean(currentContext);
+  const requiresManual = currentContext?.requiereConciliacion === true;
+  const preservedCapital = ratePending && requiresManual && currentContext.capitalPendiente !== null
+    ? currentContext.capitalPendiente : null;
   const fingerprint = JSON.stringify([credit.id, credit.revisionKey, form, sourceConfirmed, ordinaryConfirmed, currentContext, contextAttempt]);
   const currentFingerprint = useRef(fingerprint);
   currentFingerprint.current = fingerprint;
@@ -259,14 +269,18 @@ export default function CreditPrincipalPaymentPanel({
         const result = await response.json();
         if (!active || !mounted.current || controller.signal.aborted || currentContextKey.current !== requestedKey) return;
         if (!response.ok) throw new Error(result?.error || "No fue posible consultar los datos del crédito.");
-        setContext({ key: requestedKey, data: parseCapitalContext(result) });
+        const data = parseCapitalContext(result);
+        if (ratePending && data.requiereConciliacion && data.capitalPendiente !== null) {
+          setForm((previous) => ({ ...previous, capitalPendiente: String(data.capitalPendiente) }));
+        }
+        setContext({ key: requestedKey, data });
       } catch (failure) {
         if (!active || !mounted.current || controller.signal.aborted || currentContextKey.current !== requestedKey) return;
         setContextFailure({ key: requestedKey, message: failure instanceof Error ? failure.message : "No fue posible consultar los datos del crédito." });
       }
     })();
     return () => { active = false; controller.abort(); };
-  }, [expanded, needsContext, contextKey, credit.id, contextAttempt]);
+  }, [expanded, needsContext, contextKey, credit.id, contextAttempt, ratePending]);
 
   useEffect(() => {
     onBusyChange(busy || retryPending || Boolean(recovery.error));
@@ -414,11 +428,16 @@ export default function CreditPrincipalPaymentPanel({
         <Button variant="secondary" disabled={locked} onClick={() => { setContext(null); setContextFailure(null); setPreview(null); setContextAttempt((attempt) => attempt + 1); }}>Reintentar consulta del crédito</Button>
       </div>}
       {requiresManual && !retryPending && <fieldset className="space-y-4 border-t border-[var(--fp-border)] pt-4" disabled={locked}>
-        <legend className="px-1 text-base font-bold">Conciliación documentada del capital</legend>
+        <legend className="px-1 text-base font-bold">{ratePending ? "Completar condiciones del plan histórico" : "Conciliación documentada del capital"}</legend>
         {currentContext?.motivoConciliacion && <p className="text-sm text-[var(--fp-muted)]">{currentContext.motivoConciliacion}</p>}
-        <p className="text-sm text-[var(--fp-muted)]">Para el primer abono, verifica estos datos contra el estado de cuenta o plan vigente. No uses el saldo total de cuotas como capital ni una tasa vigente diferente a la pactada.</p>
+        <p className="text-sm text-[var(--fp-muted)]">{ratePending
+          ? "Los abonos anteriores y el capital pendiente se conservan. Verifica la tasa pactada y los componentes de la cuota en el contrato o plan de origen para calcular el nuevo abono."
+          : "Para el primer abono, verifica estos datos contra el estado de cuenta o plan vigente. No uses el saldo total de cuotas como capital ni una tasa vigente diferente a la pactada."}</p>
         <div className="grid gap-4 md:grid-cols-3">
-          {amountField("capitalPendiente", "Capital después de pagar las cuotas (COP)")}
+          {preservedCapital !== null ? <label className="grid gap-2 text-sm font-semibold">
+            Capital pendiente conservado (COP)
+            <Input value={new Intl.NumberFormat("es-CO").format(preservedCapital)} readOnly aria-readonly="true" />
+          </label> : amountField("capitalPendiente", "Capital después de pagar las cuotas (COP)")}
           {amountField("cuotaCredito", "Cuota de capital + interés (COP)")}
           {amountField("fianzaCuota", "Aval / fianza por cuota (COP)")}
           {amountField("seguroCuota", "Seguro por cuota (COP)")}
@@ -443,7 +462,7 @@ export default function CreditPrincipalPaymentPanel({
         <p className="text-sm text-[var(--fp-muted)]">Se utilizan la amortización original registrada en FINSERPAY y los pagos aplicados. No necesitas ingresar manualmente el capital, la tasa ni los componentes de la cuota.</p>
         {currentContext.capitalPendiente !== null && <p className="text-sm">Capital pendiente: <strong>{money(currentContext.capitalPendiente)}</strong></p>}
       </div>}
-      {!retryPending && (Boolean(credit.planCapitalVigente) || currentContext?.modoConciliacion === "VIGENTE") && <Badge tone="positive">Se utiliza el capital y el plan vigente del abono anterior</Badge>}
+      {!retryPending && ((Boolean(credit.planCapitalVigente) && !ratePending) || currentContext?.modoConciliacion === "VIGENTE") && <Badge tone="positive">Se utiliza el capital y el plan vigente del abono anterior</Badge>}
       <label className="grid gap-2 text-sm font-semibold">Observación (opcional)
         <Input value={form.observacion} maxLength={500} disabled={locked} onChange={(event) => update("observacion", event.target.value)} />
       </label>
@@ -464,6 +483,9 @@ export default function CreditPrincipalPaymentPanel({
         </dl>
         <p className="text-sm">Quedan {currentPreview.quote.cuotasPendientesDespues} cuotas de las {currentPreview.quote.cuotasPendientesAntes} pendientes.
           {currentPreview.quote.ultimaCuota && ` Última: cuota ${currentPreview.quote.ultimaCuota.numero}, ${date(currentPreview.quote.ultimaCuota.fechaVencimiento)}, por ${money(currentPreview.quote.ultimaCuota.valor)}.`}</p>
+        {currentPreview.quote.cuotaParcialConservada && <p className="text-sm text-[var(--fp-muted)]">
+          La cuota {currentPreview.quote.cuotaParcialConservada.numero} conserva su pago parcial y su saldo de {money(currentPreview.quote.cuotaParcialConservada.saldoPendiente)}. El abono reduce el capital de las cuotas siguientes.
+        </p>}
         <DataTable><table className="w-full min-w-[1100px] text-right text-sm">
           <caption className="p-3 text-left text-sm text-[var(--fp-muted)]">Plan actualizado: revisa los valores antes de confirmar. Las cuotas eliminadas quedan en cero.</caption>
           <thead><tr className="border-b border-[var(--fp-border)]">

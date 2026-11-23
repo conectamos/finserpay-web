@@ -137,9 +137,6 @@ export async function POST(req: Request, context: Context) {
         }
       }
       const { credit, abonos, plan } = state;
-      if (credit.planCapitalVigente && body.conciliacion !== undefined && body.conciliacion !== null) {
-        throw new PrincipalPaymentError("El crédito ya tiene una conciliación vigente. Los siguientes abonos conservan esos términos; omite la nueva conciliación.", 400);
-      }
       if (credit.estado === "ANULADO" || credit.pazYSalvoEmitidoAt || plan.saldoPendiente <= 0) {
         throw new PrincipalPaymentError("Este crédito está finalizado o no permite nuevos recaudos.", 409);
       }
@@ -156,6 +153,9 @@ export async function POST(req: Request, context: Context) {
       // Resolve from persisted origination terms under the same credit lock as the
       // payment. The browser cannot choose or replace the automatic reconciliation.
       const financialContext = resolvePrincipalPaymentContext({ credit, plan });
+      if (financialContext.modoConciliacion === "VIGENTE" && body.conciliacion != null) {
+        throw new PrincipalPaymentError("El crédito ya tiene una conciliación vigente. Los siguientes abonos conservan esos términos; omite la nueva conciliación.", 400);
+      }
       if (financialContext.modoConciliacion === "AUTOMATICA" && body.conciliacion != null) {
         throw new PrincipalPaymentError("Este crédito utiliza su amortización original. Actualiza el formulario y omite la conciliación manual.", 409);
       }

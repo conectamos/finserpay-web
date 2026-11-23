@@ -33,7 +33,7 @@ function fixture(options = {}) {
   const tx = {
     $queryRaw: async () => { state.locks++; return [{ id: 7 }]; },
     credito: {
-      findFirst: async () => state.credit,
+      findFirst: async () => structuredClone(state.credit),
       update: async ({ data }) => { Object.assign(state.credit, data); return state.credit; },
     },
     creditoAbono: {
@@ -485,3 +485,221 @@ test("native concurrent confirmation stays idempotent and failed audit rolls bac
 });
 
 for(const method of ["BANCOLOMBIA","BRE-B"])test(method+" se conserva al confirmar un abono a capital",async()=>{const f=fixture();f.base.metodoPago=method;const preview=await f.preview();assert.equal(preview.status,200);const result=await f.confirm(preview.body.quoteHash);assert.equal(result.status,200);assert.equal(f.state.abonos.at(-1).metodoPago,method);});
+
+function historicalRateFixture({ partial = false } = {}) {
+  // Synthetic historical cut: the later ordinary receipt finishes installment1.
+  // Its paid principal/components and all existing receipt ids must survive.
+  const snapshot = {
+    version: "CAPITAL_REDUCCION_PLAZO_V1", revision: 1, numeroCuotasOriginal: 3,
+    requiereConciliacionTasaPeriodo: true,
+    totalAbonadoAlCorte: 250, abonosAlCorte: [{ id: 10, valor: 80 }, { id: 11, valor: 170 }],
+    saldoCapitalAlCorte: 250,
+    parametros: { capitalPendiente: 250, tasaPeriodo: 0, cuotaCredito: 100,
+      fianzaCuota: 20, seguroCuota: 3, numeroProximaCuota: 1,
+      fuente: "Correccion historica sintetica; la tasa no esta documentada" },
+    cuotas: [
+      { numero: 1, fechaVencimiento: "2030-01-10", valorProgramado: 115, valorAbonadoAlCorte: 80,
+        eliminada: false, capital: 80, interes: 12, fianza: 20, seguro: 3, saldoCapital: 220,
+        componentesAbonadosAlCorte: { capital: 50, interes: 12, fianza: 15, seguro: 3 } },
+      { numero: 2, fechaVencimiento: "2030-01-25", valorProgramado: 133, valorAbonadoAlCorte: 0,
+        eliminada: false, capital: 100, interes: 10, fianza: 20, seguro: 3, saldoCapital: 120 },
+      { numero: 3, fechaVencimiento: "2030-02-10", valorProgramado: 151, valorAbonadoAlCorte: 0,
+        eliminada: false, capital: 120, interes: 8, fianza: 20, seguro: 3, saldoCapital: 0 },
+    ],
+  };
+  const priorRevision = { creditoId: 7, revision: 1, idempotencyKey: "historical-source-0001",
+    snapshotBefore: null, snapshotAfter: structuredClone(snapshot), conciliacion: structuredClone(snapshot.parametros) };
+  const f = fixture({ realCore: true, credit: {
+    id: 7, folio: "TEST-HISTORICAL", clienteNombre: "Cliente sintetico", sedeId: 1,
+    estado: "GENERADO", pazYSalvoEmitidoAt: null, saldoBaseFinanciado: 470,
+    montoCredito: 569, valorCuota: 123, plazoMeses: 3, frecuenciaPago: "QUINCENAL",
+    fechaPrimerPago: new Date("2030-01-10T12:00:00Z"), fechaProximoPago: new Date(`${partial ? "2030-01-10" : "2030-01-25"}T12:00:00Z`),
+    planCapitalVigente: snapshot,
+  }, abonos: [
+    { id: 10, valor: 80, fechaAbono: new Date("2026-09-01T12:00:00Z") },
+    { id: 11, valor: 170, fechaAbono: new Date("2026-09-01T12:01:00Z") },
+    ...(!partial ? [{ id: 12, valor: 35, fechaAbono: new Date("2026-09-26T12:00:00Z") }] : []),
+  ], revisions: [priorRevision] });
+  const body = { accion: "PREVISUALIZAR", valor: 50, metodoPago: "EFECTIVO", observacion: "Prueba sintetica",
+    conciliacion: { capitalPendiente: partial ? 250 : 220, tasaPeriodo: 0.01, cuotaCredito: 100,
+      fianzaCuota: 20, seguroCuota: 3, numeroProximaCuota: partial ? 1 : 2,
+      fuente: "Contrato sintetico original, tasa quincenal documentada y verificada" } };
+  return { ...f, body, preview: () => f.post(body),
+    confirm: quoteHash => f.post({ ...body, accion: "CONFIRMAR", quoteHash, idempotencyKey: "historical-rate-00001" }) };
+}
+
+test("marked historical GET exposes manual reconciliation and actual principal without writes", async () => {
+  const f = historicalRateFixture();
+  const before = structuredClone({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions });
+  const result = await f.get();
+  assert.equal(result.status, 200);
+  assert.equal(result.body.modoConciliacion, "MANUAL");
+  assert.equal(result.body.requiereConciliacion, true);
+  assert.equal(result.body.capitalPendiente, 220);
+  assert.match(result.body.motivoConciliacion, /tasa periódica.*no está documentada/);
+  assert.equal(result.body.conciliacion, undefined);
+  assert.equal(f.state.locks, 0);
+  assert.deepEqual({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions }, before);
+});
+
+test("marked historical preview accepts explicit documentation without changing the live rate marker or payments", async () => {
+  const f = historicalRateFixture();
+  const before = structuredClone({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions });
+  const missing = await f.post({ ...f.body, conciliacion: undefined });
+  assert.equal(missing.status, 400);
+  const preview = await f.preview();
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.equal(preview.body.quote.saldoCapitalAntes, 220);
+  assert.equal(preview.body.quote.saldoCapitalDespues, 170);
+  assert.equal(preview.body.quote.planCapitalVigente.requiereConciliacionTasaPeriodo, false);
+  assert.equal(f.state.credit.planCapitalVigente.requiereConciliacionTasaPeriodo, true);
+  assert.equal(f.state.caja.length, 0);
+  assert.deepEqual({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions }, before);
+});
+
+test("marked historical preview rejects forged capital, next installment and incomplete sources without writes", async () => {
+  for (const change of [
+    { capitalPendiente: 219 }, { capitalPendiente: 250 }, { numeroProximaCuota: 1 },
+    { numeroProximaCuota: 3 }, { tasaPeriodo: null }, { fuente: "" }, { cuotaCredito: 101 },
+  ]) {
+    const f = historicalRateFixture();
+    const before = structuredClone({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions });
+    const result = await f.post({ ...f.body, conciliacion: { ...f.body.conciliacion, ...change } });
+    assert.equal(result.status, 400, JSON.stringify({ change, response: result.body }));
+    assert.equal(f.state.caja.length, 0);
+    assert.deepEqual({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions }, before);
+  }
+});
+
+test("documented historical confirmation audits the source, preserves receipts and replays only one cash movement", async () => {
+  const f = historicalRateFixture();
+  const creditBefore = structuredClone(f.state.credit);
+  const receiptsBefore = structuredClone(f.state.abonos);
+  const priorAudit = structuredClone(f.state.revisions[0]);
+  const preview = await f.preview();
+  const responses = await Promise.all([f.confirm(preview.body.quoteHash), f.confirm(preview.body.quoteHash)]);
+  assert.ok(responses.every(result => result.status === 200), JSON.stringify(responses));
+  assert.equal(responses.filter(result => result.body.alreadyApplied).length, 1);
+  assert.equal(responses[0].body.abonoId, responses[1].body.abonoId);
+  assert.deepEqual(f.state.abonos.slice(0, receiptsBefore.length), receiptsBefore);
+  assert.equal(f.state.abonos.length, receiptsBefore.length + 1);
+  assert.equal(f.state.abonos.at(-1).valor, 50);
+  assert.equal(f.state.caja.length, 1);
+  assert.equal(f.state.caja[0].valor, 50);
+  assert.equal(f.state.revisions.length, 2);
+  assert.deepEqual(f.state.revisions[0], priorAudit);
+  assert.deepEqual(f.state.revisions[1].snapshotBefore, creditBefore.planCapitalVigente);
+  assert.deepEqual(f.state.revisions[1].snapshotAfter, structuredClone(f.state.credit.planCapitalVigente));
+  assert.deepEqual(f.state.revisions[1].conciliacion, f.body.conciliacion);
+  assert.equal(f.state.credit.planCapitalVigente.revision, 2);
+  assert.equal(f.state.credit.planCapitalVigente.requiereConciliacionTasaPeriodo, false);
+  assert.equal(f.state.credit.planCapitalVigente.parametros.tasaPeriodo, 0.01);
+  assert.equal(f.state.credit.planCapitalVigente.cuotas[1].interes, 2);
+  assert.equal(f.state.credit.planCapitalVigente.cuotas[0].valorAbonadoAlCorte, 115);
+  assert.deepEqual(f.state.credit.planCapitalVigente.cuotas[0].componentesAbonadosAlCorte,
+    { capital: 80, interes: 12, fianza: 20, seguro: 3 });
+  assert.equal(f.state.credit.saldoBaseFinanciado, creditBefore.saldoBaseFinanciado);
+  assert.equal(f.state.credit.plazoMeses, creditBefore.plazoMeses);
+  assert.equal((await f.get()).body.modoConciliacion, "VIGENTE");
+  assert.equal((await f.preview()).status, 400, "A verified revision cannot accept replacement terms");
+});
+
+test("historical reconciliation becomes stale after ordinary payments or a source revision and leaves no new payment", async () => {
+  for (const change of [
+    f => { f.state.abonos.push({ id: 30, valor: 40, fechaAbono: new Date("2026-09-26T13:00:00Z") }); },
+    f => { f.state.credit.planCapitalVigente.revision++; },
+    f => { f.body.conciliacion.fuente += "; documento cambiado"; },
+  ]) {
+    const f = historicalRateFixture();
+    const preview = await f.preview();
+    assert.equal(preview.status, 200);
+    change(f);
+    const before = structuredClone({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions });
+    const result = await f.confirm(preview.body.quoteHash);
+    assert.ok([400, 409].includes(result.status), JSON.stringify(result.body));
+    assert.equal(f.state.caja.length, 0);
+    assert.deepEqual({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions }, before);
+  }
+});
+
+test("failed historical audit rolls back the new cash receipt and keeps its rate pending documentation", async () => {
+  const f = historicalRateFixture();
+  const preview = await f.preview();
+  const before = structuredClone({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions });
+  f.state.failPersistence = true;
+  assert.equal((await f.confirm(preview.body.quoteHash)).status, 500);
+  assert.equal(f.state.caja.length, 0);
+  assert.deepEqual({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions }, before);
+  f.state.failPersistence = false;
+  assert.equal((await f.confirm(preview.body.quoteHash)).status, 200);
+  assert.equal(f.state.caja.length, 1);
+  assert.equal(f.state.revisions.length, 2);
+});
+
+test("historical partial installment stays intact through preview, confirmation and a later ordinary payment", async () => {
+  const f = historicalRateFixture({ partial: true });
+  const before = structuredClone({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions });
+  const context = await f.get();
+  assert.equal(context.body.modoConciliacion, "MANUAL");
+  assert.equal(context.body.capitalPendiente, 250);
+  const preview = await f.preview();
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.deepEqual(preview.body.quote.cuotaParcialConservada, { numero: 1, saldoPendiente: 35 });
+  assert.equal(preview.body.quote.saldoCapitalDespues, 200);
+  assert.deepEqual({ credit: f.state.credit, abonos: f.state.abonos, revisions: f.state.revisions }, before);
+  assert.equal((await f.confirm(preview.body.quoteHash)).status, 200);
+  assert.deepEqual(f.state.abonos.slice(0, 2), before.abonos);
+  assert.equal(f.state.caja.length, 1);
+  assert.equal(f.state.caja[0].valor, 50);
+  assert.deepEqual(structuredClone(f.state.credit.planCapitalVigente.cuotas[0]),
+    { ...before.credit.planCapitalVigente.cuotas[0], saldoCapital: 170 });
+  assert.equal(f.state.credit.fechaProximoPago.toISOString().slice(0, 10), "2030-01-10");
+  assert.deepEqual(f.state.revisions[1].snapshotBefore, before.credit.planCapitalVigente);
+  assert.equal(f.state.revisions[1].snapshotAfter.requiereConciliacionTasaPeriodo, false);
+  const repeatBody = { accion: "PREVISUALIZAR", valor: 40, metodoPago: "EFECTIVO", observacion: "Segundo extra sintetico" };
+  const repeatPreview = await f.post(repeatBody);
+  assert.equal(repeatPreview.status, 200, JSON.stringify(repeatPreview.body));
+  assert.equal(repeatPreview.body.quote.saldoCapitalAntes, 200);
+  assert.equal(repeatPreview.body.quote.saldoCapitalDespues, 160);
+  assert.deepEqual(repeatPreview.body.quote.cuotaParcialConservada, { numero: 1, saldoPendiente: 35 });
+  const confirmation = { ...repeatBody, accion: "CONFIRMAR", quoteHash: repeatPreview.body.quoteHash,
+    idempotencyKey: "historical-rate-00002" };
+  const responses = await Promise.all([f.post(confirmation), f.post(confirmation)]);
+  assert.ok(responses.every(response => response.status === 200));
+  assert.equal(f.state.caja.length, 2);
+  assert.equal(f.state.caja.reduce((sum, movement) => sum + movement.valor, 0), 90);
+  assert.equal(f.state.revisions.length, 3);
+  assert.deepEqual(structuredClone(f.state.credit.planCapitalVigente.cuotas[0]),
+    { ...before.credit.planCapitalVigente.cuotas[0], saldoCapital: 130 });
+  assert.equal((await f.get()).body.capitalPendiente, 160);
+  f.state.abonos.push({ id: 30, valor: 35, fechaAbono: new Date("2026-09-26T13:00:00Z") });
+  const plan = realPlan.buildCreditPaymentPlan({ ...f.state.credit, abonos: f.state.abonos, today: "2026-09-26" });
+  assert.equal(plan.nextInstallment.numero, 2);
+  assert.equal(plan.saldoCapitalPendiente, 130);
+  assert.equal((await f.get()).body.capitalPendiente, 130);
+  const rows = realCore.resolveCapitalPlanRows(f.state.credit.planCapitalVigente, 375);
+  assert.deepEqual(rows[0].componentsPaid, { capital: 80, interes: 12, fianza: 20, seguro: 3 });
+  assert.deepEqual(f.state.abonos.slice(0, 2), before.abonos);
+});
+
+test("historical partial principal cap protects the current installment while permitting all future capital to settle", async () => {
+  const blocked = historicalRateFixture({ partial: true });
+  const before = structuredClone({ credit: blocked.state.credit, abonos: blocked.state.abonos, revisions: blocked.state.revisions });
+  const tooMuch = await blocked.post({ ...blocked.body, valor: 221 });
+  assert.equal(tooMuch.status, 400);
+  assert.match(tooMuch.body.error, /capital de las cuotas futuras/);
+  assert.equal(blocked.state.caja.length, 0);
+  assert.deepEqual({ credit: blocked.state.credit, abonos: blocked.state.abonos, revisions: blocked.state.revisions }, before);
+  const f = historicalRateFixture({ partial: true });
+  f.body.valor = 220;
+  const preview = await f.preview();
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.equal(preview.body.quote.saldoCapitalDespues, 30);
+  assert.equal(preview.body.quote.ultimaCuota.numero, 1);
+  assert.equal(preview.body.quote.cuotasEliminadas, 2);
+  assert.equal((await f.confirm(preview.body.quoteHash)).status, 200);
+  assert.equal((await f.get()).body.capitalPendiente, 30);
+  assert.ok(f.state.credit.planCapitalVigente.cuotas.slice(1).every(row => row.eliminada && row.valorProgramado === 0));
+  assert.equal(f.state.credit.planCapitalVigente.cuotas[0].valorAbonadoAlCorte, 80);
+  assert.equal(f.state.caja[0].valor, 220);
+});
