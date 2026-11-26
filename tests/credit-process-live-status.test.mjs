@@ -231,6 +231,22 @@ test("los permisos protegen también la existencia de un envío pendiente", asyn
   assert.doesNotMatch(JSON.stringify(await result.json()), /UNCERTAIN|3433|signatureDispatch/);
 });
 
+test("el estado expone el motivo operativo de saldo sin liberar ni revelar el diagnóstico del proveedor", async () => {
+  const signatureDispatch = { id: "00000000-0000-4000-8000-000000003433", status: "UNCERTAIN",
+    failureStage: "provider_dispatch", failureReason: "PROVIDER_INSUFFICIENT_BALANCE",
+    hasReceipt: false, hasProviderLocator: false, actorUserId: 40, lastError: "PRIVATE-PROVIDER-ERROR" };
+  for (const viewer of [{}, { user: { id: 40, rolNombre: "ASESOR", aliadoId: 2 }, seller: { id: 40, tipoPerfil: "VENDEDOR" } }]) {
+    const f = routeFixture({ ...viewer, row: { process: null, signatureDispatch } });
+    const result = await (await f.invoke()).json();
+    assert.equal(result.signatureDispatch.failureReason, "PROVIDER_INSUFFICIENT_BALANCE");
+    assert.equal(result.signatureDispatch.status, "UNCERTAIN");
+    assert.equal(result.signatureDispatch.canResume, false);
+    assert.equal(result.pending, true);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE|lastError|actorUserId/);
+    assert.equal(f.calls.length, 1, "la lectura del motivo no consulta ni modifica el proveedor");
+  }
+});
+
 test("administrador de aliado y asesor sólo pueden leer su alcance", async () => {
   const allyAdmin = routeFixture({ user: { rolNombre: "ADMIN", aliadoAccesoCodigo: "OTHER", aliadoAccesoId: 3 } });
   assert.equal((await allyAdmin.invoke()).status, 404);
@@ -323,7 +339,25 @@ test("consulta SQL real descarta la firma y el Veriff antiguos después de una n
     assert.equal(pending.failureStage, "receipt_persistence");
     assert.equal(pending.hasProviderLocator, true);
     assert.equal(pending.hasReceipt, false);
+    assert.equal(pending.failureReason, null);
     assert.doesNotMatch(JSON.stringify(pending), /PRIVATE|lastError|processUuid/);
+    const balanceError = 'provider_dispatch [UNKNOWN]: Ocurrió un error: No posees saldo suficiente para realizar la operación. Firma seguro method -> PRIVATE-METHOD';
+    await database.query(`UPDATE "FirmaSeguroDraftDispatch" SET "lastError"=$2 WHERE "id"=$1`, [dispatchId, balanceError]);
+    const balance = (await database.query(f.calls[0].sql, [25])).rows[0].signatureDispatch;
+    assert.equal(balance.failureReason, "PROVIDER_INSUFFICIENT_BALANCE");
+    assert.equal(balance.status, "UNCERTAIN");
+    assert.doesNotMatch(JSON.stringify(balance), /PRIVATE|lastError|processUuid|Firma seguro method/);
+    for (const diagnostic of [
+      balanceError.replace('provider_dispatch', 'providerXdispatch'),
+      balanceError.replace('provider_dispatch', 'receipt_persistence'),
+      balanceError.replace('saldo suficiente', 'saldo disponible'),
+      balanceError.replace('Ocurrió un error: ', 'Respuesta no confirmada: '),
+      `provider_dispatch [UNKNOWN]: PRIVATE-PREFIX ${balanceError}`,
+    ]) {
+      await database.query(`UPDATE "FirmaSeguroDraftDispatch" SET "lastError"=$2 WHERE "id"=$1`, [dispatchId, diagnostic]);
+      assert.equal((await database.query(f.calls[0].sql, [25])).rows[0].signatureDispatch.failureReason, null,
+        "el motivo exige el prefijo y la frase documentados exactos");
+    }
     await database.query(`UPDATE "FirmaSeguroDraftDispatch" SET "lastError"='providerXdispatch [PRIVATE]: hidden' WHERE "id"=$1`, [dispatchId]);
     assert.equal((await database.query(f.calls[0].sql, [25])).rows[0].signatureDispatch.failureStage, null,
       "el diagnóstico exige el prefijo exacto y no interpreta los guiones bajos como comodines");

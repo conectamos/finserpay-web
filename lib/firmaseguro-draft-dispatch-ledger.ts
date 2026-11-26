@@ -786,6 +786,12 @@ function preparationFailureMessage(error: unknown) {
   // Keep provider diagnostics in the server ledger. Only fixed, actionable
   // messages may cross the API boundary; provider responses can contain PII.
   const failure = record(error);
+  if (failure.code === "FIRMASEGURO_BALANCE_INSUFFICIENT") {
+    return "FirmaSeguro no tiene saldo disponible para enviar la firma. El contrato no se envió. Administración debe recargar el saldo y continuar el mismo trámite.";
+  }
+  if (failure.code === "FIRMASEGURO_BALANCE_UNVERIFIED") {
+    return "No se pudo verificar el saldo de FirmaSeguro. El contrato no se envió. Reintenta en unos momentos; los datos del cliente se conservan.";
+  }
   const detail = record(failure.detail);
   const status = typeof failure.status === "number" ? failure.status : 0;
   const loginFailure = failure.name === "FirmaSeguroApiError"

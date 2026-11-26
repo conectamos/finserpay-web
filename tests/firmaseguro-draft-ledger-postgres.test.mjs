@@ -238,6 +238,16 @@ async function redirectReservation(f, { id, phone, expectedProcessUuid = f.proce
 
 const privatePreparationDiagnostic = "provider-private@example.invalid token=DO_NOT_EXPOSE <html>upstream error</html>";
 const preparationFailureCases = [
+  {
+    name: "saldo de firmas insuficiente",
+    error: Object.assign(new Error(privatePreparationDiagnostic), { code: "FIRMASEGURO_BALANCE_INSUFFICIENT" }),
+    expected: /FirmaSeguro no tiene saldo disponible.*Administración debe recargar el saldo/,
+  },
+  {
+    name: "saldo de firmas no verificable",
+    error: Object.assign(new Error(privatePreparationDiagnostic), { code: "FIRMASEGURO_BALANCE_UNVERIFIED" }),
+    expected: /No se pudo verificar el saldo de FirmaSeguro/,
+  },
   ...[500, 502, 503, 504, 408, 429].map(status => ({
     name: `acceso temporal HTTP ${status}`,
     error: Object.assign(new Error(privatePreparationDiagnostic), {

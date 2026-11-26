@@ -101,6 +101,28 @@ test("envíos inciertos, en curso o preparados por otro usuario sólo muestran c
   }
 });
 
+test("saldo insuficiente explica el bloqueo sin reenviar el contrato ni exponer diagnósticos", async () => {
+  const state = pending({ status: "UNCERTAIN", canResume: false, failureStage: "provider_dispatch",
+    failureReason: "PROVIDER_INSUFFICIENT_BALANCE", lastError: "PRIVATE-PROVIDER-ERROR" });
+  const parsed = readPendingDraftSignatureDispatch(state);
+  assert.equal(parsed.failureReason, "PROVIDER_INSUFFICIENT_BALANCE");
+  assert.equal(parsed.canResume, false);
+  assert.doesNotMatch(JSON.stringify(parsed), /PRIVATE|lastError/);
+  for (const change of [{ failureReason: "PRIVATE-PROVIDER-ERROR" }, { failureStage: "receipt_persistence" }]) {
+    assert.equal(readPendingDraftSignatureDispatch({ ...state, ...change }).failureReason, null);
+  }
+  const f = fixture({ state });
+  await f.run();
+  await f.run();
+  assert.equal(f.saves.length, 0);
+  assert.equal(f.sends.length, 0);
+  assert.equal(f.notices.at(-1).text,
+    "FirmaSeguro reportó saldo insuficiente. Administración debe recargar el saldo de firmas y revisar el intento anterior para continuar.");
+  assert.equal(f.notices.at(-1).tone, "amber");
+  assert.match(pendingDraftSignatureMessage({ ...parsed, hasReceipt: true }), /confirmación pendiente de conciliar/,
+    "la evidencia de aceptación conserva su recuperación por consulta");
+});
+
 test("datos visibles distintos exigen revisar el contrato preparado antes del envío original", async () => {
   const f = fixture({ visible: { valorEquipoTotal: 2100000 } });
   await f.run();

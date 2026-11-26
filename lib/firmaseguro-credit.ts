@@ -10,6 +10,7 @@ import {
   parseCreditRouteLookup,
 } from "@/lib/credit-route-lookup";
 import {
+  assertFirmaSeguroDispatchBalance,
   buildFirmaSeguroCallbackUrl,
   collectFirmaSeguroUuidCandidates,
   extractFirmaSeguroSignedDocument,
@@ -1296,6 +1297,9 @@ export async function prepareFirmaSeguroReissue(
     || (config.notifyByEmail && !delivery.signerEmail)) throw new Error("REISSUE_CONTACT_UNAVAILABLE");
   const auth = await firmaSeguroSignIn();
   delivery = await resolveFirmaSeguroDeliveryAuth(auth.token, delivery);
+  // Preparation still precedes the ledger's DISPATCHING claim. A failed read
+  // must never reach create-full or turn a known lack of cupo into UNCERTAIN.
+  await assertFirmaSeguroDispatchBalance(auth.token, config);
   const company = Boolean(config.nit && config.useCompanyEndpoint);
   const payload = company
     ? buildCreateFullByCompanyPayload(credito, person, pdf.toString("base64"), callbackUrl, delivery)

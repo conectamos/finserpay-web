@@ -203,6 +203,7 @@ test("el preparador admite WhatsApp histórico sin correo y falla cerrado si cor
       getFirmaSeguroConfig: config,
       firmaSeguroSignIn: async () => { signIns++; return { token: "token" }; },
       resolveFirmaSeguroDeliveryAuth: async (_token, value) => value,
+      assertFirmaSeguroDispatchBalance: async () => {},
       buildCreateFullByCompanyPayload: () => { throw new Error("company endpoint inesperado"); },
       buildCreateFullPayload: (credit, person, _pdf, _callback, channels) => {
         observed = { credit, person, channels };
