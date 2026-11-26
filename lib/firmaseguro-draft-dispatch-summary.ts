@@ -11,6 +11,7 @@ export type DraftSignatureDispatchSummary = {
   hasReceipt: boolean;
   canResume: boolean;
   failureStage?: "provider_dispatch" | "receipt_persistence" | null;
+  failureReason?: "PROVIDER_INSUFFICIENT_BALANCE" | null;
   hasProviderLocator?: boolean;
 };
 
@@ -39,6 +40,10 @@ export function serializeDraftSignatureDispatch(
     hasReceipt: row.hasReceipt === true,
     failureStage: row.failureStage === "provider_dispatch" || row.failureStage === "receipt_persistence"
       ? row.failureStage : null,
+    // This operational reason describes the provider response; it never proves
+    // that no process was created or authorizes another dispatch.
+    failureReason: row.failureStage === "provider_dispatch" && row.failureReason === "PROVIDER_INSUFFICIENT_BALANCE"
+      ? row.failureReason : null,
     hasProviderLocator: row.hasProviderLocator === true,
     // An accepted or ambiguous attempt is never permission to send again. Even
     // a never-dispatched preparation belongs to its original actor and purpose;

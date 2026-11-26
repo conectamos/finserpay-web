@@ -176,6 +176,7 @@ test("el preparador coloca el scope del despacho original y nunca realiza el env
     splitClientName: () => ({ document: "1000000001" }), getFirmaSeguroConfig: () => ({ callbackSecret: configuredSecret }),
     getFirmaSeguroDelivery: () => ({ sendByEmail: true, signerEmail: "synthetic@example.invalid" }),
     firmaSeguroSignIn: async () => { signIns++; return { token: "synthetic-token" }; }, resolveFirmaSeguroDeliveryAuth: async (_token, value) => value,
+    assertFirmaSeguroDispatchBalance: async () => {},
     buildCreateFullPayload: (_credit, _person, _pdf, url) => { callback = url; return { tags: [] }; },
     redactBase64Payload: value => value,
     firmaSeguroCreateFull: async () => { sends++; throw new Error("not allowed"); },

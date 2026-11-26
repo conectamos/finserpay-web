@@ -17,10 +17,26 @@ test("el resumen revela un intento pendiente sin exponer contrato, proveedor ni 
   assert.deepEqual(value, {
     id, status: "PREPARING", pending: true, createdAt: source.createdAt,
     updatedAt: source.updatedAt, hasReceipt: false, canResume: true,
-    failureStage: null, hasProviderLocator: false,
+    failureStage: null, failureReason: null, hasProviderLocator: false,
   });
   assert.doesNotMatch(JSON.stringify(value), /PRIVATE|actorUserId|reason|sourcePayload|requestPayload|documentBase64|expectedProcessUuid/);
   assert.equal(source.documentBase64, "PRIVATE-PDF", "la lectura no modifica el intento original");
+});
+
+test("el motivo operativo permite solo el enum conocido sin cambiar un envío incierto", () => {
+  const row = { ...source, status: "UNCERTAIN", failureStage: "provider_dispatch",
+    failureReason: "PROVIDER_INSUFFICIENT_BALANCE", lastError: "PRIVATE-PROVIDER-ERROR" };
+  const result = serializeDraftSignatureDispatch(row, { actorUserId: 11 });
+  assert.equal(result.failureReason, "PROVIDER_INSUFFICIENT_BALANCE");
+  assert.equal(result.status, "UNCERTAIN");
+  assert.equal(result.pending, true);
+  assert.equal(result.canResume, false, "el motivo no autoriza reenvíos");
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE|lastError|documentBase64|actorUserId/);
+  for (const patch of [
+    { failureReason: "PRIVATE-PROVIDER-ERROR" }, { failureStage: null }, { failureStage: "receipt_persistence" },
+  ]) {
+    assert.equal(serializeDraftSignatureDispatch({ ...row, ...patch }, { actorUserId: 11 }).failureReason, null);
+  }
 });
 
 test("solo la preparación comercial nunca enviada del mismo actor puede reanudarse", () => {

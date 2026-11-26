@@ -90,6 +90,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
           CASE WHEN LEFT(attempt."lastError", LENGTH('provider_dispatch [')) = 'provider_dispatch [' THEN 'provider_dispatch'
             WHEN LEFT(attempt."lastError", LENGTH('receipt_persistence [')) = 'receipt_persistence [' THEN 'receipt_persistence'
             ELSE NULL END AS "failureStage",
+          CASE WHEN LEFT(attempt."lastError", LENGTH('provider_dispatch [')) = 'provider_dispatch ['
+            AND LEFT(SPLIT_PART(attempt."lastError", ']: ', 2),
+              LENGTH('Ocurrió un error: No posees saldo suficiente para realizar la operación.')) =
+                'Ocurrió un error: No posees saldo suficiente para realizar la operación.'
+            THEN 'PROVIDER_INSUFFICIENT_BALANCE' ELSE NULL END AS "failureReason",
           NULLIF(BTRIM(COALESCE(attempt."processUuid", '')), '') IS NOT NULL AS "hasProviderLocator",
           EXISTS (SELECT 1 FROM "FirmaSeguroDraftDispatchReceipt" receipt
             WHERE receipt."dispatchId" = attempt."id") AS "hasReceipt"

@@ -224,6 +224,7 @@ async function fixture(t, providerType) {
       balanceTypeId: 1, identificationTypeId: 1, typePersonId: 1, deadlineDays: 7,
       notifyByEmail: false, notifyByWhatsApp: true }),
     firmaSeguroSignIn: async () => ({ token: "mock-token" }),
+    assertFirmaSeguroDispatchBalance: async token => { assert.equal(token, "mock-token"); },
     firmaSeguroGetAuthenticationTypes: async () => [{ id: 1, name: "OTP WhatsApp" }],
     firmaSeguroCreateFull: async (token, payload, options) => {
       assert.equal(token, "mock-token"); assert.equal(options.retryAuthorization, false);

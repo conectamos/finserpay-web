@@ -16848,7 +16848,7 @@ export default function CreditFactoryConsole({
                   </div>
 
                   {pendingFirmaSeguroDispatch ? <section className="rounded-[var(--fp-radius-md)] border border-[var(--fp-border)] bg-[var(--fp-amber-soft)] p-5" role="status" aria-label="Estado del envío de firma">
-                    <h4 className="flex items-center gap-2 font-bold"><Clock3 className="h-5 w-5" aria-hidden="true" />{pendingFirmaSeguroDispatch.status === "PREPARING" ? "Contrato preparado" : "Envío de firma por confirmar"}</h4>
+                    <h4 className="flex items-center gap-2 font-bold"><Clock3 className="h-5 w-5" aria-hidden="true" />{pendingFirmaSeguroDispatch.failureReason === "PROVIDER_INSUFFICIENT_BALANCE" ? "FirmaSeguro sin saldo" : pendingFirmaSeguroDispatch.status === "PREPARING" ? "Contrato preparado" : "Envío de firma por confirmar"}</h4>
                     <p className="mt-2 text-sm leading-6">{pendingDraftSignatureMessage(pendingFirmaSeguroDispatch)}</p>
                     <Button type="button" variant="secondary" className="mt-4" onClick={() => void refreshFirmaSeguroDraftProcess()}
                       disabled={firmaSeguroRefreshing || firmaSeguroSubmitting} aria-busy={firmaSeguroRefreshing}>
@@ -16923,7 +16923,7 @@ export default function CreditFactoryConsole({
                       },
                       {
                         number: 2,
-                        label: pendingFirmaSeguroDispatch ? "Envío pendiente" : "Expediente preparado",
+                        label: pendingFirmaSeguroDispatch?.failureReason === "PROVIDER_INSUFFICIENT_BALANCE" ? "FirmaSeguro sin saldo" : pendingFirmaSeguroDispatch ? "Envío pendiente" : "Expediente preparado",
                         active: veriffApproved && !firmaSeguroProcessSent,
                         complete: firmaSeguroProcessSent,
                       },
@@ -17015,7 +17015,7 @@ export default function CreditFactoryConsole({
                               />
                             )}
                             {pendingFirmaSeguroDispatch
-                              ? pendingFirmaSeguroDispatch.status === "PREPARING" ? "Contrato preparado" : "Envío por confirmar"
+                              ? pendingFirmaSeguroDispatch.failureReason === "PROVIDER_INSUFFICIENT_BALANCE" ? "FirmaSeguro sin saldo" : pendingFirmaSeguroDispatch.status === "PREPARING" ? "Contrato preparado" : "Envío por confirmar"
                               : firmaSeguroRequiresFirstPaymentDateReissue
                               ? "Nueva firma requerida"
                               : firmaSeguroProcessSigned

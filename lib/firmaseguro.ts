@@ -1101,11 +1101,54 @@ export async function firmaSeguroGetProcessStatus(token: string, uuid: string, o
   );
 }
 
-export async function firmaSeguroGetBalanceByNit(token: string, nit: string) {
+export async function firmaSeguroGetBalanceByNit(token: string, nit: string, options: { timeoutMs?: number } = {}) {
   return firmaSeguroRequest<unknown>(
     `/api/v2/Balance/balance-by-nit/${encodeURIComponent(nit)}`,
-    { token }
+    { token, timeoutMs: options.timeoutMs }
   );
+}
+
+export class FirmaSeguroBalancePreflightError extends Error {
+  code: "FIRMASEGURO_BALANCE_INSUFFICIENT" | "FIRMASEGURO_BALANCE_UNVERIFIED";
+
+  constructor(code: FirmaSeguroBalancePreflightError["code"]) {
+    super(code === "FIRMASEGURO_BALANCE_INSUFFICIENT"
+      ? "FirmaSeguro no tiene cupo disponible para enviar la firma. El contrato no se envió. Solicita al administrador revisar el saldo de la integración."
+      : "No se pudo verificar el cupo de FirmaSeguro. El contrato no se envió. Solicita al administrador revisar la integración antes de reintentar.");
+    this.name = "FirmaSeguroBalancePreflightError";
+    this.code = code;
+  }
+}
+
+/** Read the exact configured pool before reserving a provider POST. A positive
+ * balance is a point-in-time check, not a reservation or proof of POST outcome.
+ * Only the provider's observed balance-by-nit response shape is accepted here.
+ * Authentication names in that response are not treated as undocumented IDs.
+ */
+export async function assertFirmaSeguroDispatchBalance(token: string, config: Pick<FirmaSeguroConfig,
+  "nit" | "balanceTypeId" | "signatureMethodId">) {
+  const unverified = () => new FirmaSeguroBalancePreflightError("FIRMASEGURO_BALANCE_UNVERIFIED");
+  const nit = typeof config.nit === "string" ? config.nit.trim() : "";
+  if (!nit || !Number.isSafeInteger(config.balanceTypeId) || config.balanceTypeId < 1
+    || !Number.isSafeInteger(config.signatureMethodId) || config.signatureMethodId < 1) throw unverified();
+  let result: unknown;
+  try {
+    result = await firmaSeguroGetBalanceByNit(token, nit, { timeoutMs: 10000 });
+  } catch {
+    throw unverified();
+  }
+  if (!result || typeof result !== "object" || Array.isArray(result)) throw unverified();
+  const balance = result as Record<string, unknown>;
+  if (balance.nit !== nit || !Array.isArray(balance.transactions)) throw unverified();
+  const pools = balance.transactions.filter((item): item is Record<string, unknown> => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const pool = item as Record<string, unknown>;
+    return pool.balanceTypeId === config.balanceTypeId
+      && Array.isArray(pool.signatureMethodsId)
+      && pool.signatureMethodsId.includes(config.signatureMethodId);
+  });
+  if (pools.length !== 1 || typeof pools[0].amount !== "number" || !Number.isFinite(pools[0].amount)) throw unverified();
+  if (pools[0].amount <= 0) throw new FirmaSeguroBalancePreflightError("FIRMASEGURO_BALANCE_INSUFFICIENT");
 }
 
 export async function firmaSeguroGetSignatureTypes(token: string) {

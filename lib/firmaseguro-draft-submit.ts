@@ -36,6 +36,8 @@ export function readPendingDraftSignatureDispatch(value: unknown): DraftSignatur
     updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : null,
     hasReceipt: item.hasReceipt,
     failureStage: item.failureStage === "provider_dispatch" || item.failureStage === "receipt_persistence" ? item.failureStage : null,
+    failureReason: item.failureStage === "provider_dispatch" && item.failureReason === "PROVIDER_INSUFFICIENT_BALANCE"
+      ? item.failureReason : null,
     hasProviderLocator: item.hasProviderLocator === true,
     canResume: item.canResume && item.status === "PREPARING" && !item.hasReceipt && item.hasProviderLocator === false };
 }
@@ -43,6 +45,7 @@ export function readPendingDraftSignatureDispatch(value: unknown): DraftSignatur
 export function pendingDraftSignatureMessage(dispatch: DraftSignatureDispatchSummary) {
   if (dispatch.canResume) return "El contrato ya está preparado. Continúa el mismo envío con los datos guardados en la solicitud.";
   if (dispatch.hasReceipt) return "El envío anterior tiene una confirmación pendiente de conciliar. Consulta su estado para recuperar la misma firma.";
+  if (dispatch.failureReason === "PROVIDER_INSUFFICIENT_BALANCE") return "FirmaSeguro reportó saldo insuficiente. Administración debe recargar el saldo de firmas y revisar el intento anterior para continuar.";
   if (dispatch.status === "PREPARING") return "Hay un contrato preparado para esta solicitud. El usuario que lo preparó debe continuar el mismo envío; consulta su estado o solicita revisión.";
   return "Existe un envío anterior cuyo resultado aún no se ha confirmado. Consulta el estado o solicita revisión antes de volver a enviar.";
 }
