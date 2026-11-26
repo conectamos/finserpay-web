@@ -29,3 +29,27 @@ la aceptación de un proceso de firma y la entrega de su notificación son hecho
 distintos.
 
 Pruebas de interacción: `node --experimental-strip-types --test tests/pending-signature-recovery-ui.test.mjs`.
+
+## Intento adicional pagado después de un fallo por saldo
+
+El operador central puede preparar un único intento pagado adicional cuando los
+dos intentos anteriores respondieron con el error específico de saldo insuficiente,
+sin identificador remoto, recibo ni proceso asociado. Requiere revisar el portal,
+registrar la autorización expresa del nuevo cobro y aceptar que el resultado remoto
+anterior sigue siendo desconocido. La búsqueda vacía no se registra como prueba
+de ausencia ni los errores históricos se convierten en rechazos seguros.
+
+`scripts/authorize-paid-firmaseguro-draft-retry.mjs --input-file FILE` verifica
+las condiciones sin modificar datos. El JSON debe contener `draftId`, `dispatchId`
+del segundo intento, `actorId`, `reason`, `providerReviewConfirmed`,
+`remoteOutcomeUnknownAccepted` y `newChargeAccepted`; las tres confirmaciones deben
+ser verdaderas. El administrador debe estar activo y pertenecer a la central.
+El campo opcional `expectedFingerprint` permite fijar la huella obtenida en una
+verificación previa y detener la operación si el expediente cambió.
+
+`--apply` reserva un nuevo envío con el PDF, folio, sello y contactos conservados;
+`--send` requiere además `--apply` y ejecuta el ledger normal una sola vez. El
+esquema conserva ambas autorizaciones inmutables y limita este permiso a un intento
+adicional. Los replays devuelven la misma reserva y no crean una cadena de reenvíos.
+El saldo se comprueba antes de reservar y de enviar; un fallo posterior al POST
+continúa requiriendo conciliación, sin un reintento automático.
