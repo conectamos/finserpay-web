@@ -60,6 +60,7 @@ type DispatchDependencies = {
   failed?: typeof markCreditWelcomeVoiceDispatchFailed;
   unknown?: typeof markCreditWelcomeVoiceDispatchUnknown;
   fetcher?: typeof fetch;
+  now?: () => Date;
 };
 
 export async function dispatchCreditWelcomeVoice(
@@ -91,6 +92,17 @@ export async function dispatchCreditWelcomeVoice(
     }
     // The short opening uses the revalidated name/document for confirmation.
     // Financial conditions still come only from the authenticated identity tool.
+    // The transaction may commit across midnight. Recheck its server-owned
+    // deadline after speech/token preparation, immediately before the HTTP.
+    if (prepared.automaticWindowExpiresAt !== undefined) {
+      const deadline = Date.parse(prepared.automaticWindowExpiresAt);
+      const time = (deps.now ?? (() => new Date()))().getTime();
+      if (!Number.isFinite(deadline) || !Number.isFinite(time) || time >= deadline) {
+        await (deps.failed ?? markCreditWelcomeVoiceDispatchFailed)(claim.eventId, "WINDOW_CLOSED_BEFORE_DISPATCH");
+        summary.skipped++;
+        return;
+      }
+    }
     let callId: string | null = null;
     try {
       const response = await (deps.fetcher ?? fetch)(config.webhookUrl, {

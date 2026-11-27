@@ -2,10 +2,50 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadReissueModule } from "./credit-approval-reissue-fixture.mjs";
 
-const { planCreditWelcomeVoiceFollowup: decide, getCreditWelcomeVoicePendingSlot: currentSlot } = loadReissueModule("lib/credit-welcome-voice-followup-core.ts");
+const { planCreditWelcomeVoiceFollowup: decide, getCreditWelcomeVoicePendingSlot: currentSlot,
+  getCreditWelcomeVoiceAutomaticBlock: automaticBlock } = loadReissueModule("lib/credit-welcome-voice-followup-core.ts");
 const iso = "2026-10-20T15:00:00.000Z";
 const input = patch => ({ now: new Date(iso), phase: "FAST", fastAttempts: 0, lastEvent: null, ...patch });
 const safe = value => JSON.parse(JSON.stringify(value));
+
+test("automatic creation window uses Colombia time including the exact 19:00 boundary", () => {
+  const now = new Date("2026-11-28T00:01:00Z"); // November 27, 19:01 Colombia.
+  assert.equal(automaticBlock("2026-11-27T23:59:59.999Z", now, "19"), "AUTOMATIC_CREATION_OUTSIDE_WINDOW");
+  assert.equal(automaticBlock("2026-11-28T00:00:00Z", now, "19"), null);
+  assert.equal(automaticBlock("2026-11-27T19:00:00-05:00", now, "19"), null);
+  assert.equal(automaticBlock(new Date("2026-11-28T00:00:00Z"), now, "19"), null);
+  assert.equal(automaticBlock("2026-11-27T19:30:00Z", now, "19"), "AUTOMATIC_CREATION_OUTSIDE_WINDOW");
+});
+
+test("daytime credits stay manual even when the evening window opens", () => {
+  for (const now of ["2026-11-27T23:59:00Z", "2026-11-28T00:00:00Z", "2026-11-28T04:59:59Z"]) {
+    assert.equal(automaticBlock("2026-11-27T16:00:00Z", new Date(now), "19"), "AUTOMATIC_CREATION_OUTSIDE_WINDOW");
+  }
+});
+
+test("an evening credit can dispatch that night but never the next day or a later evening", () => {
+  const created = "2026-11-28T00:00:00Z";
+  assert.equal(automaticBlock(created, new Date("2026-11-28T04:59:59.999Z"), "19"), null);
+  for (const now of ["2026-11-28T05:00:00Z", "2026-11-28T16:00:00Z", "2026-11-29T00:00:00Z"]) {
+    assert.equal(automaticBlock(created, new Date(now), "19"), "AUTOMATIC_WINDOW_CLOSED");
+  }
+});
+
+test("active automatic scheduling fails closed for missing, invalid or future creation evidence", () => {
+  const now = new Date("2026-11-28T01:00:00Z");
+  for (const created of [undefined, null, "", "2026-11-27", "2026-02-30T20:00:00-05:00", new Date("invalid"), "2026-11-28T01:00:01Z"]) {
+    assert.equal(automaticBlock(created, now, "19"), "AUTOMATIC_CREATION_OUTSIDE_WINDOW");
+  }
+  assert.equal(automaticBlock("2026-11-28T00:00:00Z", new Date("invalid"), "19"), "AUTOMATIC_WINDOW_CLOSED");
+});
+
+test("unset schedule is backward compatible but malformed active configuration never authorizes a call", () => {
+  const now = new Date("2026-11-28T01:00:00Z");
+  assert.equal(automaticBlock(undefined, now, undefined), null);
+  for (const hour of ["", "7", "19:00", "24", "-1", " 19", "19 ", "19\n", "false", "NaN"]) {
+    assert.equal(automaticBlock("2026-11-28T00:00:00Z", now, hour), "AUTOMATIC_SCHEDULE_INVALID");
+  }
+});
 
 test("one fresh initial is due and reuses a queued NORMAL or INDIVIDUAL_IMPORT event", () => {
   for (const lastEvent of [null, { source: "NORMAL", status: "PENDING" }, { source: "INDIVIDUAL_IMPORT", status: "PENDING", attemptNumber: 7 }]) {

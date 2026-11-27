@@ -51,6 +51,25 @@ function colombiaDay(time: number): string {
   return new Date(time - 5 * 60 * 60_000).toISOString().slice(0, 10);
 }
 
+/** Creation time belongs to Credito, never the outbox or an imported business date. */
+export function getCreditWelcomeVoiceAutomaticBlock(
+  createdAt: Date | string | null | undefined, now: Date, startHour: string | undefined,
+): string | null {
+  // Unconfigured installations retain their existing policy until activation.
+  if (startHour === undefined) return null;
+  if (startHour.length !== 2 || !/^(?:[01]\d|2[0-3])$/.test(startHour)) return "AUTOMATIC_SCHEDULE_INVALID";
+  const time = dateMillis(now), created = dateMillis(createdAt);
+  if (time === null) return "AUTOMATIC_WINDOW_CLOSED";
+  if (created === null || created > time) return "AUTOMATIC_CREATION_OUTSIDE_WINDOW";
+  const from = Number(startHour);
+  const creationHour = new Date(created - 5 * 60 * 60_000).getUTCHours();
+  if (creationHour < from) return "AUTOMATIC_CREATION_OUTSIDE_WINDOW";
+  const currentHour = new Date(time - 5 * 60 * 60_000).getUTCHours();
+  // Never turn an earlier day or a midnight delay into the next day's batch.
+  if (currentHour < from || colombiaDay(created) !== colombiaDay(time)) return "AUTOMATIC_WINDOW_CLOSED";
+  return null;
+}
+
 function pendingSlots(day: string): Array<{ slot: string; time: number }> {
   return HOURS.map(hour => {
     const slot = day + "T" + String(hour).padStart(2, "0") + ":00";
