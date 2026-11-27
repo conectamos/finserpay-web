@@ -23,7 +23,7 @@ export async function runVoiceReviewCampaign(deps: CampaignDependencies = {}) {
   if (!config) return report;
   report.configured = true;
   const now = deps.now ?? (() => new Date());
-  const store = deps.store ?? createCreditWelcomeVoiceStore({ enabled: () => true, now });
+  const store = deps.store ?? createCreditWelcomeVoiceStore({ enabled: () => true, now, env });
   await (deps.ensureSchema ?? ensureCreditWelcomeVoiceSchema)();
   // Persist and verify the immutable cohort even before the first scheduled call.
   await store.ensureVoiceReviewCampaign(campaign);
@@ -32,6 +32,7 @@ export async function runVoiceReviewCampaign(deps: CampaignDependencies = {}) {
   report.inWindow = true;
   const result = await (deps.dispatch ?? dispatchCreditWelcomeVoice)({ limit: 3 }, {
     config,
+    now,
     ensureSchema: async () => {},
     claim: () => store.claimVoiceReviewCampaign({ campaignId: campaign.id, slot, limit: 3 }),
     prepare: async eventId => {

@@ -12,7 +12,7 @@ import { creditWelcomeVoiceSchemaStatements } from "@/scripts/credit-welcome-voi
 import { buildWelcomeVoiceFinancialSpeech, type WelcomeVoiceFinancialSpeech } from "@/lib/credit-welcome-voice-speech";
 import { classifyVoiceCampaignResult, getVoiceReviewCampaignSlot } from "@/lib/credit-voice-review-campaign-core";
 import { isWelcomeVoiceDocumentFragment, parseWelcomeVoiceDocumentDictation } from "@/lib/credit-welcome-voice-document";
-import { planCreditWelcomeVoiceFollowup, WELCOME_VOICE_AUTOMATIC_LIMIT_REASON, type WelcomeVoiceFollowupPhase as CreditWelcomeVoiceFollowupPhase } from "@/lib/credit-welcome-voice-followup-core";
+import { getCreditWelcomeVoiceAutomaticBlock, planCreditWelcomeVoiceFollowup, WELCOME_VOICE_AUTOMATIC_LIMIT_REASON, type WelcomeVoiceFollowupPhase as CreditWelcomeVoiceFollowupPhase } from "@/lib/credit-welcome-voice-followup-core";
 import { hasSavedCreditApprovalCallRecording, readSavedHumanWelcomeOutcome, stopAutomaticCreditWelcomeCallsForRecording } from "@/lib/credit-welcome-voice-recording";
 
 export type CreditWelcomeVoiceSource = "NORMAL" | "INDIVIDUAL_IMPORT" | "CONTROLLED_TEST" | "SCHEDULED_CAMPAIGN" | "AUTOMATIC_RETRY" | "OPERATOR_REQUEST";
@@ -26,7 +26,7 @@ export type CreditWelcomeVoiceSnapshot = {
   frequency: string; firstDueDate: string; calendar: string[];
 };
 export type VoiceFinancialSnapshot = Omit<CreditWelcomeVoiceSnapshot, "document" | "phone"> & { speech: WelcomeVoiceFinancialSpeech | null };
-export type VoiceDispatchClaim = { eventId: string; creditId: number; snapshot: CreditWelcomeVoiceSnapshot; destinationPhone?: string };
+export type VoiceDispatchClaim = { eventId: string; creditId: number; snapshot: CreditWelcomeVoiceSnapshot; destinationPhone?: string; automaticWindowExpiresAt?: string };
 export type VoiceOperatorCall = VoiceDispatchClaim & { created: boolean; destinationPhone: string; status: CreditWelcomeVoiceStatus };
 export type WelcomeVoiceIdentityRecoveryResponse = {
   code: "IDENTITY_NOT_CONFIRMED" | "DOCUMENT_NOT_UNDERSTOOD" | null;
@@ -75,7 +75,7 @@ export async function ensureCreditWelcomeVoiceSchema() {
 }
 
 const creditSelect = {
-  id: true, folio: true, clienteNombre: true, clienteDocumento: true, clienteTelefono: true,
+  id: true, folio: true, createdAt: true, clienteNombre: true, clienteDocumento: true, clienteTelefono: true,
   referenciaEquipo: true, equipoMarca: true, equipoModelo: true,
   estado: true, pazYSalvoEmitidoAt: true, cuotaInicial: true, montoCredito: true, valorCuota: true,
   plazoMeses: true, frecuenciaPago: true, fechaPrimerPago: true, fechaProximoPago: true,
@@ -393,26 +393,46 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         OR "status" IN ('DISPATCHING','ACCEPTED','COMPLETED','FAILED','UNKNOWN')) LIMIT 1`, creditId, currentEventId);
     return rows.length > 0;
   }
-  async function stopAutomaticDispatch(db: WelcomeVoiceTransaction, event: EventRow, followup: FollowupRow | null) {
+  const automaticSources = ["NORMAL", "INDIVIDUAL_IMPORT", "AUTOMATIC_RETRY", "SCHEDULED_CAMPAIGN"];
+  const automaticWindowBlock = (credit: Credit | null) => getCreditWelcomeVoiceAutomaticBlock(
+    credit?.createdAt, now(), env.DAPTA_WELCOME_VOICE_AUTOMATIC_FROM_HOUR,
+  );
+  async function stopAutomaticDispatch(db: WelcomeVoiceTransaction, event: EventRow, followup: FollowupRow | null,
+    reason = WELCOME_VOICE_AUTOMATIC_LIMIT_REASON) {
     // Only this dispatch owner can assert that its claimed request has not begun HTTP.
     await db.$executeRawUnsafe(`UPDATE "CreditWelcomeVoiceEvent" SET "status"='CANCELLED',"resultCode"=$2,"updatedAt"=$3
-      WHERE "id"=$1::uuid AND "status" IN ('PENDING','DISPATCHING')`, event.id, WELCOME_VOICE_AUTOMATIC_LIMIT_REASON, now());
+      WHERE "id"=$1::uuid AND "status" IN ('PENDING','DISPATCHING')`, event.id, reason, now());
     if (followup && !["CONTACTED", "STOPPED"].includes(followup.phase)) {
-      await updateFollowup(db, followup, "STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON);
+      await updateFollowup(db, followup, "STOPPED", reason);
     }
-    if (event.campaignId) await setMemberState(db, event.campaignId, event.creditoId, "STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON);
+    if (event.campaignId) await setMemberState(db, event.campaignId, event.creditoId, "STOPPED", reason);
   }
-  async function operatorCallBlock(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, creditId: number, currentEventId: string | null = null) {
+  async function revalidateAutomaticWindow(db: WelcomeVoiceTransaction, event: EventRow, followup: FollowupRow | null):
+    Promise<{ expiresAt?: string } | null> {
+    if (env.DAPTA_WELCOME_VOICE_AUTOMATIC_FROM_HOUR === undefined) return {};
+    const credit = await readCredit(db, event.creditoId);
+    const reason = automaticWindowBlock(credit);
+    if (reason) { await stopAutomaticDispatch(db, event, followup, reason); return null; }
+    // This exclusive deadline also travels through the commit to the provider
+    // boundary; its day comes from the credit, never from a later outbox claim.
+    const created = credit!.createdAt;
+    const day = colombiaMinute(created instanceof Date ? created : new Date(created))!.slice(0, 10);
+    return { expiresAt: new Date(Date.parse(`${day}T00:00:00-05:00`) + 86_400_000).toISOString() };
+  }
+  async function operatorCallBlock(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, creditId: number,
+    currentEventId: string | null = null, ignoreUnsentAutomatic = false) {
     if (await readSavedHumanWelcomeOutcome(db, creditId) === "OPT_OUT") return "OPT_OUT";
     const excluded = await db.$queryRawUnsafe<Array<{ creditoId: number }>>(`SELECT "creditoId" FROM "VoiceReviewCampaignMember"
       WHERE "creditoId"=$1 AND "stopReason"='OPERATOR_EXCLUDED' LIMIT 1`, creditId);
     if (excluded.length) return "OPERATOR_EXCLUDED";
-    const events = await db.$queryRawUnsafe<Array<Pick<EventRow, "source" | "status" | "communicationOutcome" | "resultCode">>>(`SELECT "source","status","communicationOutcome","resultCode"
+    const events = await db.$queryRawUnsafe<Array<Pick<EventRow, "source" | "status" | "communicationOutcome" | "resultCode" | "dispatchedAt" | "providerCallId" | "resultHash">>>(`SELECT "source","status","communicationOutcome","resultCode","dispatchedAt","providerCallId","resultHash"
       FROM "CreditWelcomeVoiceEvent" WHERE "creditoId"=$1 AND ($2::uuid IS NULL OR "id"<>$2::uuid)
       AND ("status" IN ('PENDING','DISPATCHING','ACCEPTED','UNKNOWN') OR
         ("source"<>'CONTROLLED_TEST' AND ("communicationOutcome"='OPT_OUT' OR "resultCode"='RECORDING_DECLINED')))`, creditId, currentEventId);
     if (events.some(event => event.source !== "CONTROLLED_TEST" && (event.communicationOutcome === "OPT_OUT" || event.resultCode === "RECORDING_DECLINED"))) return "OPT_OUT";
-    return events.some(event => ["PENDING", "DISPATCHING", "ACCEPTED", "UNKNOWN"].includes(event.status)) ? "OTHER_CALL_IN_FLIGHT" : null;
+    return events.some(event => ["PENDING", "DISPATCHING", "ACCEPTED", "UNKNOWN"].includes(event.status) &&
+      !(ignoreUnsentAutomatic && automaticSources.includes(event.source) && event.status === "PENDING" &&
+        event.dispatchedAt === null && event.providerCallId === null && event.resultHash === null)) ? "OTHER_CALL_IN_FLIGHT" : null;
   }
   async function readOperatorRequest(db: Pick<WelcomeVoiceTransaction, "$queryRawUnsafe">, field: "requestId" | "eventId", id: string, lock = false) {
     return (await db.$queryRawUnsafe<OperatorRequestRow[]>(`SELECT "requestId"::text,"eventId"::text,"actorId","origin","destinationPhone"
@@ -432,7 +452,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
   async function getCreditWelcomeVoiceOperatorAvailability(creditId: number): Promise<{ canCall: boolean; phone: string | null; reason?: string }> {
     if (!validCreditId(creditId)) throw new CreditWelcomeVoiceStoreError("INVALID_OPERATOR_CALL", "Crédito inválido.", 400);
     const credit = await readCredit(database, creditId), snapshot = credit ? buildCreditWelcomeVoiceSnapshot(credit) : null;
-    const reason = creditExclusion(credit, snapshot) ?? await operatorCallBlock(database, creditId);
+    const reason = creditExclusion(credit, snapshot) ?? await operatorCallBlock(database, creditId, null, !!automaticWindowBlock(credit));
     const phone = snapshot?.phone ?? normalizeColombianMobile(credit?.clienteTelefono);
     const messages: Record<string, string> = {
       CREDIT_MISSING: "No se encontró el crédito.",
@@ -467,6 +487,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     if (await automaticCallAlreadyAttempted(db, input.creditId)) return null;
     const credit = await readCredit(db, input.creditId);
     if (!credit) throw new CreditWelcomeVoiceStoreError("CREDIT_NOT_FOUND", "Crédito no encontrado.", 404);
+    if (automaticWindowBlock(credit)) return null;
     const snapshot = buildCreditWelcomeVoiceSnapshot(credit);
     const exclusion = creditExclusion(credit, snapshot);
     const rows = await db.$queryRawUnsafe<Array<{ id: string }>>(`INSERT INTO "CreditWelcomeVoiceEvent"
@@ -493,6 +514,8 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
   }
   async function revalidateAutomaticSnapshot(db: WelcomeVoiceTransaction, followup: FollowupRow, initial: EventRow) {
     const credit = await readCredit(db, followup.creditoId);
+    const scheduleBlock = automaticWindowBlock(credit);
+    if (scheduleBlock) { await stopAutomaticDispatch(db, initial, followup, scheduleBlock); return null; }
     const current = credit ? buildCreditWelcomeVoiceSnapshot(credit) : null;
     let code = creditExclusion(credit, current);
     if (!code && (!initial.snapshot || !current)) code = "INVALID_CONDITIONS";
@@ -508,6 +531,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     return current;
   }
   async function adoptNewAutomaticFollowups(db: WelcomeVoiceTransaction) {
+    if (env.DAPTA_WELCOME_VOICE_AUTOMATIC_FROM_HOUR !== undefined) return;
     const value = env.DAPTA_WELCOME_VOICE_AUTOMATIC_START_AT;
     if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) return;
     const start = new Date(value);
@@ -548,6 +572,8 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
           !last || last.creditoId !== followup.creditoId || !["NORMAL", "INDIVIDUAL_IMPORT", "AUTOMATIC_RETRY"].includes(last.source)) {
           await updateFollowup(db, followup, "STOPPED", "INVALID_AUTOMATIC_STREAM"); continue;
         }
+        if (last.status === "PENDING" && last.dispatchedAt === null && last.providerCallId === null && last.resultHash === null &&
+          !await revalidateAutomaticWindow(db, last, followup)) continue;
         const actualAttempts = (await db.$queryRawUnsafe<Array<{ count: number }>>(`SELECT COUNT(*)::integer AS "count" FROM "CreditWelcomeVoiceEvent"
           WHERE "creditoId"=$1 AND (("id"=$2::uuid AND "source" IN ('NORMAL','INDIVIDUAL_IMPORT')) OR
             ("source"='AUTOMATIC_RETRY' AND "retryPhase"='FAST'))
@@ -572,6 +598,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         }
         const snapshot = await revalidateAutomaticSnapshot(db, { ...followup, fastAttempts: actualAttempts }, initial);
         if (!snapshot) continue;
+        if (!await revalidateAutomaticWindow(db, last, followup)) continue;
         const eventId = last.id;
         const time = now();
         if (last.status === "PENDING" && last.id === initial.id && actualAttempts === 0) {
@@ -637,6 +664,11 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, member.creditoId);
         if (await stopForSavedRecording(db, member.creditoId)) continue;
         if (!await checkCampaignReview(db, member)) continue;
+        const credit = await readCredit(db, member.creditoId);
+        const scheduleBlock = automaticWindowBlock(credit);
+        if (scheduleBlock) {
+          await setMemberState(db, input.campaignId, member.creditoId, "STOPPED", scheduleBlock); continue;
+        }
         const globalBlock = await globalWelcomeBlock(db, member.creditoId);
         if (globalBlock) {
           if (globalBlock.phase) await setMemberState(db, input.campaignId, member.creditoId, globalBlock.phase, globalBlock.reason);
@@ -646,7 +678,6 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
           await setMemberState(db, input.campaignId, member.creditoId, "STOPPED", WELCOME_VOICE_AUTOMATIC_LIMIT_REASON);
           continue;
         }
-        const credit = await readCredit(db, member.creditoId);
         const snapshot = credit ? buildCreditWelcomeVoiceSnapshot(credit) : null;
         const exclusion = creditExclusion(credit, snapshot);
         if (exclusion || !snapshot) {
@@ -684,6 +715,10 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         if (!Number.isSafeInteger(attempt) || attempt > 2_147_483_647) {
           await setMemberState(db, input.campaignId, member.creditoId, "HELD", "ATTEMPT_LIMIT"); continue;
         }
+        const finalScheduleBlock = automaticWindowBlock(credit);
+        if (finalScheduleBlock) {
+          await setMemberState(db, input.campaignId, member.creditoId, "STOPPED", finalScheduleBlock); continue;
+        }
         const eventId = randomUUID(), time = now();
         await db.$executeRawUnsafe(`INSERT INTO "CreditWelcomeVoiceEvent"
           ("id","creditoId","source","attemptNumber","campaignId","campaignSlot","status","snapshot","dispatchedAt","createdAt","updatedAt")
@@ -712,7 +747,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
     return database.$transaction(async db => {
       // One request key has one actor/credit/destination scope, even across different credits.
       await db.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1))::text`, `finserpay-welcome-operator:${input.requestId.toLowerCase()}`);
-      await readFollowup(db, input.creditId);
+      const followup = await readFollowup(db, input.creditId);
       await db.$queryRawUnsafe(`SELECT "id" FROM "Credito" WHERE "id"=$1 FOR UPDATE`, input.creditId);
       const previous = await readOperatorRequest(db, "requestId", input.requestId, true);
       if (previous) {
@@ -730,8 +765,21 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       const snapshot = buildCreditWelcomeVoiceSnapshot(credit);
       if (creditExclusion(credit, snapshot) || !snapshot) throw new CreditWelcomeVoiceStoreError("OPERATOR_CALL_INELIGIBLE", "El crédito no puede recibir esta llamada.");
       if (expectedDocument && expectedDocument !== snapshot.document) throw new CreditWelcomeVoiceStoreError("OPERATOR_CALL_DOCUMENT_MISMATCH", "El crédito no corresponde al documento indicado.");
-      const blocked = await operatorCallBlock(db, input.creditId);
+      const scheduleBlock = automaticWindowBlock(credit);
+      const blocked = await operatorCallBlock(db, input.creditId, null, !!scheduleBlock);
       if (blocked) throw new CreditWelcomeVoiceStoreError(blocked, "La llamada está bloqueada por una restricción vigente.");
+      if (scheduleBlock) {
+        // The followup -> credit order is already held. Never cancel another
+        // owner's live/uncertain request or rewrite its external evidence.
+        const cancelled = await db.$queryRawUnsafe<Array<{ id: string }>>(`UPDATE "CreditWelcomeVoiceEvent"
+          SET "status"='CANCELLED',"resultCode"=$2,"updatedAt"=$3 WHERE "creditoId"=$1
+          AND "source" IN ('NORMAL','INDIVIDUAL_IMPORT','AUTOMATIC_RETRY','SCHEDULED_CAMPAIGN')
+          AND "status"='PENDING' AND "dispatchedAt" IS NULL AND "providerCallId" IS NULL AND "resultHash" IS NULL
+          RETURNING "id"::text`, input.creditId, scheduleBlock, now());
+        if (followup && !["CONTACTED", "STOPPED"].includes(followup.phase) && cancelled.some(event => event.id === followup.lastEventId)) {
+          await updateFollowup(db, followup, "STOPPED", scheduleBlock);
+        }
+      }
       const highest = (await db.$queryRawUnsafe<Array<{ max: number }>>(`SELECT COALESCE(MAX("attemptNumber"),-1) AS "max"
         FROM "CreditWelcomeVoiceEvent" WHERE "creditoId"=$1 AND "type"='BIENVENIDA_VOZ'`, input.creditId))[0].max;
       const attempt = highest + 1;
@@ -832,6 +880,7 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
       }
       const event = await readEvent(db, eventId);
       if (!event || event.status !== "DISPATCHING") return null;
+      if (automaticSources.includes(event.source) && !await revalidateAutomaticWindow(db, event, followup)) return null;
       if (["NORMAL", "INDIVIDUAL_IMPORT", "AUTOMATIC_RETRY", "SCHEDULED_CAMPAIGN"].includes(event.source)
         && await stopForSavedRecording(db, event.creditoId)) {
         // This dispatch owner has not begun HTTP. The upload cleanup cannot
@@ -875,7 +924,10 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
           await updateFollowup(db, followup, other.phase ?? "HELD", other.reason);
           return null;
         }
-        return { eventId, creditId: event.creditoId, snapshot: event.snapshot };
+        const window = await revalidateAutomaticWindow(db, event, followup);
+        if (!window) return null;
+        return { eventId, creditId: event.creditoId, snapshot: event.snapshot,
+          ...(window.expiresAt ? { automaticWindowExpiresAt: window.expiresAt } : {}) };
       }
       if (event.source === "SCHEDULED_CAMPAIGN") {
         const member = campaignMember;
@@ -902,6 +954,12 @@ export function createCreditWelcomeVoiceStore(deps: { database?: StoreDatabase; 
         }
       }
       const snapshot = await revalidate(db, event);
+      if (snapshot && event.source === "SCHEDULED_CAMPAIGN") {
+        const window = await revalidateAutomaticWindow(db, event, followup);
+        if (!window) return null;
+        return { eventId, creditId: event.creditoId, snapshot,
+          ...(window.expiresAt ? { automaticWindowExpiresAt: window.expiresAt } : {}) };
+      }
       return snapshot ? { eventId, creditId: event.creditoId, snapshot } : null;
     }, { timeout: 30_000 });
   }

@@ -21,6 +21,7 @@ const dispatcher = loadReissueModule("lib/credit-welcome-voice-dispatch.ts", {
   "@/lib/credit-welcome-voice-store": {},
 }, { AbortSignal });
 const credit = id => ({ id, folio: `FC-FOLLOWUP-${id}`, clienteNombre: "ANA MARIA PRUEBA", clienteDocumento: "00123456",
+  createdAt: "2026-10-09T14:00:00Z",
   clienteTelefono: "3000000001", referenciaEquipo: null, equipoMarca: null, equipoModelo: null,
   estado: "ENTREGABLE", pazYSalvoEmitidoAt: null, cuotaInicial: 200, montoCredito: 300, valorCuota: 100,
   plazoMeses: 3, frecuenciaPago: "QUINCENAL", fechaPrimerPago: "2026-10-17", fechaProximoPago: "2026-10-17",
@@ -40,11 +41,15 @@ async function fixture(t, { count = 1, enabled = true, env = {} } = {}) {
     await db.query('INSERT INTO "Credito" VALUES ($1,$2::jsonb)', [id, JSON.stringify(credit(id))]);
     await db.query('INSERT INTO "CreditApprovalReview" VALUES ($1,\'APPROVED\',1,NULL)', [id]);
   }
-  let time = new Date("2026-10-09T14:00:00Z"), rollback = false, queries = 0;
+  let time = new Date("2026-10-09T14:00:00Z"), rollback = false, queries = 0, onCreditRead = null;
   const adapter = connection => ({
     $queryRawUnsafe: async (sql, ...values) => { queries++; return (await connection.query(sql, values)).rows; },
     $executeRawUnsafe: async (sql, ...values) => { queries++; return (await connection.query(sql, values)).affectedRows; },
-    credito: { findUnique: async ({ where }) => (await connection.query('SELECT "data" FROM "Credito" WHERE "id"=$1', [where.id])).rows[0]?.data ?? null },
+    credito: { findUnique: async ({ where, select }) => {
+      assert.equal(select.createdAt, true, "The window must use the database creation timestamp");
+      const row = (await connection.query('SELECT "data" FROM "Credito" WHERE "id"=$1', [where.id])).rows[0]?.data ?? null;
+      onCreditRead?.(where.id); return row;
+    } },
   });
   const client = { ...adapter(db), $transaction: callback => db.transaction(async connection => {
     const result = await callback(adapter(connection));
@@ -67,6 +72,7 @@ async function fixture(t, { count = 1, enabled = true, env = {} } = {}) {
     await db.query('INSERT INTO "CreditApprovalCallRecording" VALUES($1,$2,$3)', [id, revision, new Uint8Array([1, 2, 3])]);
   };
   return { db, store, enqueue, events, followups, accepted, result, update, saveRecording, env, queries: () => queries,
+    onCreditRead: callback => { onCreditRead = callback; },
     now: () => time, time: value => { time = new Date(value); }, advance: ms => { time = new Date(time.getTime() + ms); }, rollback: () => { rollback = true; } };
 }
 
@@ -86,6 +92,134 @@ test("a human work result stops an unsent automatic welcome and opt-out also blo
     if (outcome === "OPT_OUT") await assert.rejects(f.store.prepareCreditWelcomeVoiceOperatorCall({ creditId: 1, actorId: 51,
       requestId: "98a7dfb4-a20d-482c-9411-8bff948ab001" }), error => error.code === "OPT_OUT");
   }
+});
+
+test("the evening rule uses credit creation time for both normal and individual imports, without creating daytime events", async t => {
+  const f = await fixture(t, { count: 8, env: { DAPTA_WELCOME_VOICE_AUTOMATIC_FROM_HOUR: "19" } });
+  f.time("2026-11-28T00:00:00Z"); // November 27, exactly 19:00 in Colombia.
+  const created = ["2026-11-27T23:59:59.999Z", "2026-11-27T23:59:59.999Z",
+    "2026-11-28T00:00:00Z", "2026-11-28T00:00:00Z", null, "invalid", "2026-11-28T00:00:01Z", "2026-11-27T04:00:00Z"];
+  for (let id = 1; id <= 8; id++) await f.update(id, { createdAt: created[id - 1] });
+  // Imported business dates and outbox timestamps cannot make a daytime
+  // creation eligible or disqualify a credit actually created this evening.
+  await f.update(1, { fechaCredito: "2026-11-28T00:00:00Z" });
+  await f.update(3, { fechaCredito: "2020-01-01T12:00:00Z" });
+  for (let id = 1; id <= 8; id++) assert.equal(!!await f.enqueue(id, id % 2 ? "NORMAL" : "INDIVIDUAL_IMPORT"), id === 3 || id === 4);
+  assert.deepEqual((await f.events()).map(event => event.creditoId), [3, 4]);
+  assert.deepEqual(Array.from(await f.store.claimPendingCreditWelcomeVoice(), event => event.creditId), [3, 4]);
+  for (const event of await f.events()) {
+    const prepared = await f.store.prepareCreditWelcomeVoiceDispatch(event.id);
+    assert.equal(prepared.automaticWindowExpiresAt, "2026-11-28T05:00:00.000Z");
+  }
+  const snapshot = (await f.events())[0].snapshot;
+  assert.equal(Object.hasOwn(snapshot, "createdAt"), false, "The policy timestamp is not a financial snapshot field");
+});
+
+test("invalid evening configuration blocks automatic enqueue but not explicit calls or controlled tests", async t => {
+  const f = await fixture(t, { count: 2, env: { DAPTA_WELCOME_VOICE_AUTOMATIC_FROM_HOUR: "7pm" } });
+  assert.equal(await f.enqueue(), null); assert.equal((await f.events()).length, 0);
+  const operator = await f.store.prepareCreditWelcomeVoiceOperatorCall({ creditId: 1, actorId: 7,
+    requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1" });
+  assert.equal(Object.hasOwn(await f.store.prepareCreditWelcomeVoiceDispatch(operator.eventId), "automaticWindowExpiresAt"), false);
+  const controlled = await f.store.prepareCreditWelcomeVoiceControlledTest({ creditId: 2, expectedPhone: "3000000001" });
+  assert.equal(Object.hasOwn(await f.store.prepareCreditWelcomeVoiceDispatch(controlled.eventId), "automaticWindowExpiresAt"), false);
+});
+
+test("old daytime pending queues are stopped, and a defined evening policy never adopts deployment backlog", async t => {
+  const f = await fixture(t, { count: 3 });
+  await f.enqueue(1); await f.enqueue(2, "INDIVIDUAL_IMPORT"); await f.enqueue(3);
+  await f.db.exec('DELETE FROM "CreditWelcomeVoiceFollowup" WHERE "creditoId"=3');
+  f.env.DAPTA_WELCOME_VOICE_AUTOMATIC_FROM_HOUR = "19";
+  f.env.DAPTA_WELCOME_VOICE_AUTOMATIC_START_AT = "2026-10-09T13:59:00.000Z";
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+  assert.equal((await f.followups()).length, 2, "Legacy events are not adopted under the new creation policy");
+  for (const row of await f.followups()) {
+    assert.equal(row.phase, "STOPPED"); assert.equal(row.reason, "AUTOMATIC_CREATION_OUTSIDE_WINDOW");
+    assert.equal(row.nextAttemptAt, null);
+  }
+  assert.deepEqual((await f.events()).map(row => row.status), ["CANCELLED", "CANCELLED", "PENDING"]);
+  f.time("2026-10-10T00:00:00Z");
+  assert.equal((await f.store.claimPendingCreditWelcomeVoice()).length, 0);
+});
+
+test("midnight between claim and prepare cancels the known-unsent call before any provider request", async t => {
+  const f = await fixture(t, { env: { DAPTA_WELCOME_VOICE_AUTOMATIC_FROM_HOUR: "19" } });
+  await f.update(1, { createdAt: "2026-11-28T00:00:00Z" });
+  f.time("2026-11-28T04:59:59.999Z"); await f.enqueue();
+  const claims = await f.store.claimPendingCreditWelcomeVoice(); assert.equal(claims.length, 1);
+  f.time("2026-11-28T05:00:00Z");
+  let requests = 0;
+  const report = await dispatcher.dispatchCreditWelcomeVoice({}, {
+    config: { webhookUrl: "https://api.dapta.ai/synthetic-window-test", secret: "synthetic-window-test-secret-at-least-32-characters",
+      agentId: "4b68b7b8-382f-4f9a-8e1f-8b88665acf38" },
+    ensureSchema: async () => {}, claim: async () => claims, prepare: f.store.prepareCreditWelcomeVoiceDispatch,
+    accepted: () => assert.fail("A closed window cannot produce acceptance"),
+    unknown: () => assert.fail("No external request was made"), failed: () => assert.fail("Local window suppression is persisted by prepare"),
+    fetcher: async () => { requests++; assert.fail("Must not call Dapta"); },
+  });
+  assert.equal(requests, 0); assert.equal(report.skipped, 1);
+  assert.equal((await f.events())[0].status, "CANCELLED");
+  assert.equal((await f.events())[0].resultCode, "AUTOMATIC_WINDOW_CLOSED");
+  assert.equal((await f.followups())[0].phase, "STOPPED");
+});
+
+test("prepare checks the actual clock again after asynchronous financial and cross-call checks", async t => {
+  const f = await fixture(t, { env: { DAPTA_WELCOME_VOICE_AUTOMATIC_FROM_HOUR: "19" } });
+  await f.update(1, { createdAt: "2026-11-28T00:00:00Z" });
+  f.time("2026-11-28T04:59:59.999Z"); await f.enqueue();
+  const [claim] = await f.store.claimPendingCreditWelcomeVoice();
+  let reads = 0;
+  f.onCreditRead(() => { if (++reads === 3) f.time("2026-11-28T05:00:00Z"); });
+  assert.equal(await f.store.prepareCreditWelcomeVoiceDispatch(claim.eventId), null);
+  assert.equal(reads, 3); assert.equal((await f.events())[0].resultCode, "AUTOMATIC_WINDOW_CLOSED");
+});
+
+test("a manual daytime request cancels only invalid known-unsent automatic pending work", async t => {
+  const f = await fixture(t); await f.enqueue();
+  f.env.DAPTA_WELCOME_VOICE_AUTOMATIC_FROM_HOUR = "19";
+  const history = await f.events(), beforeRead = f.queries();
+  assert.equal((await f.store.getCreditWelcomeVoiceOperatorAvailability(1)).canCall, true);
+  assert.ok(f.queries() > beforeRead); assert.deepEqual(await f.events(), history, "Availability stays read-only");
+  const input = { creditId: 1, actorId: 7, requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2" };
+  const operator = await f.store.prepareCreditWelcomeVoiceOperatorCall(input);
+  assert.equal(operator.created, true); assert.ok(await f.store.prepareCreditWelcomeVoiceDispatch(operator.eventId));
+  const replay = await f.store.prepareCreditWelcomeVoiceOperatorCall(input);
+  assert.equal(replay.created, false); assert.equal(replay.eventId, operator.eventId);
+  const rows = await f.events(); assert.equal(rows.length, 2);
+  assert.equal(rows[0].status, "CANCELLED"); assert.equal(rows[0].resultCode, "AUTOMATIC_CREATION_OUTSIDE_WINDOW");
+  assert.equal(rows[1].source, "OPERATOR_REQUEST"); assert.equal((await f.followups())[0].phase, "STOPPED");
+});
+
+test("the daytime manual exception never ignores dispatching, accepted, unknown, dispatch evidence or opt-out", async t => {
+  const f = await fixture(t, { count: 5 });
+  for (let id = 1; id <= 5; id++) await f.enqueue(id);
+  await f.db.exec(`UPDATE "CreditWelcomeVoiceEvent" SET "status"=CASE "creditoId"
+    WHEN 1 THEN 'DISPATCHING' WHEN 2 THEN 'ACCEPTED' WHEN 3 THEN 'UNKNOWN' ELSE 'PENDING' END;
+    UPDATE "CreditWelcomeVoiceEvent" SET "dispatchedAt"='2026-10-09T14:00:00Z' WHERE "creditoId"=4;
+    UPDATE "CreditWelcomeVoiceEvent" SET "communicationOutcome"='OPT_OUT' WHERE "creditoId"=5;`);
+  f.env.DAPTA_WELCOME_VOICE_AUTOMATIC_FROM_HOUR = "19";
+  const history = await f.events();
+  for (let id = 1; id <= 5; id++) {
+    assert.equal((await f.store.getCreditWelcomeVoiceOperatorAvailability(id)).canCall, false);
+    await assert.rejects(f.store.prepareCreditWelcomeVoiceOperatorCall({ creditId: id, actorId: 7,
+      requestId: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaa00${id}` }), error => error.code === (id === 5 ? "OPT_OUT" : "OTHER_CALL_IN_FLIGHT"));
+  }
+  assert.deepEqual(await f.events(), history);
+});
+
+test("scheduled campaigns cannot use their daytime lane or an old claim to bypass the creation window", async t => {
+  const f = await fixture(t, { count: 2 });
+  await f.db.exec('UPDATE "CreditApprovalReview" SET "status"=\'PENDING\'');
+  await f.store.ensureVoiceReviewCampaign({ id: "window-campaign", startDate: "2026-10-09", creditIds: [1, 2] });
+  f.time("2026-10-09T15:00:00Z");
+  const [legacy] = await f.store.claimVoiceReviewCampaign({ campaignId: "window-campaign", slot: "2026-10-09T10:00", limit: 1 });
+  assert.ok(legacy);
+  f.env.DAPTA_WELCOME_VOICE_AUTOMATIC_FROM_HOUR = "19";
+  assert.equal((await f.store.claimVoiceReviewCampaign({ campaignId: "window-campaign", slot: "2026-10-09T10:00" })).length, 0);
+  assert.equal(await f.store.prepareVoiceReviewCampaign(legacy.eventId), null);
+  const members = (await f.db.query('SELECT "state","stopReason" FROM "VoiceReviewCampaignMember" ORDER BY "creditoId"')).rows;
+  assert.ok(members.every(row => row.state === "STOPPED" && row.stopReason === "AUTOMATIC_CREATION_OUTSIDE_WINDOW"));
+  assert.equal((await f.events()).length, 1); assert.equal((await f.events())[0].status, "CANCELLED");
 });
 
 test("saved recording from any approval revision prevents new initial queues and stops already pending automatic sources", async t => {

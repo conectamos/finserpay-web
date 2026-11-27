@@ -103,6 +103,39 @@ test("credit cancelled or contact changed after claim never reaches Dapta", asyn
   assert.equal(result.skipped, 1); assert.equal(f.received.length, 0); assert.equal(f.states.length, 0);
 });
 
+test("an automatic window closing after prepare resolves prevents the real outbound boundary", async () => {
+  let time = new Date("2026-11-28T04:59:59.999Z");
+  const f = fixture({ now: () => time, prepare: async () => {
+    // Simulate commit returning after the last in-transaction schedule check.
+    time = new Date("2026-11-28T05:00:00Z");
+    return { ...claim, automaticWindowExpiresAt: "2026-11-28T05:00:00Z" };
+  } });
+  const result = await dispatch.dispatchCreditWelcomeVoice({}, f.deps);
+  assert.equal(result.skipped, 1); assert.equal(result.accepted, 0); assert.equal(result.unknown, 0);
+  assert.equal(f.received.length, 0);
+  assert.deepEqual(f.states, [["failed", claim.eventId, "WINDOW_CLOSED_BEFORE_DISPATCH"]]);
+});
+
+test("invalid automatic deadlines fail closed and an open night never sends the internal deadline to Dapta", async () => {
+  for (const expiry of ["", "invalid", "2026-11-28T04:59:59Z"]) {
+    const f = fixture({ now: () => new Date("2026-11-28T05:00:00Z"),
+      prepare: async () => ({ ...claim, automaticWindowExpiresAt: expiry }) });
+    assert.equal((await dispatch.dispatchCreditWelcomeVoice({}, f.deps)).skipped, 1);
+    assert.equal(f.received.length, 0);
+  }
+  const night = fixture({ now: () => new Date("2026-11-28T04:59:59.999Z"),
+    prepare: async () => ({ ...claim, automaticWindowExpiresAt: "2026-11-28T05:00:00Z" }) });
+  assert.equal((await dispatch.dispatchCreditWelcomeVoice({}, night.deps)).accepted, 1);
+  assert.equal("automaticWindowExpiresAt" in night.received[0].body, false);
+});
+
+test("explicit manual claims remain callable during the day without an automatic deadline", async () => {
+  const f = fixture({ now: () => new Date("2026-11-28T15:00:00Z"),
+    prepare: async () => ({ ...claim, destinationPhone: "573000000088" }) });
+  assert.equal((await dispatch.dispatchCreditWelcomeVoice({}, f.deps)).accepted, 1);
+  assert.equal(f.received[0].body.to_number, "+573000000088");
+});
+
 test("spoken identity preserves registered accents and cannot replace the credit's identity", async () => {
   const prepared = { ...claim, snapshot: { ...claim.snapshot, name: "ana maria prueba", spokenName:"ANA MARÍA PRUEBA" } };
   const valid = fixture({ prepare: async () => prepared });
